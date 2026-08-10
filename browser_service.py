@@ -97,6 +97,15 @@ class BrowserService:
     async def _launch_browser(self):
         """Pick a browser: explicit path, then installed Chrome, then bundled."""
         executable_path = os.getenv("CHROME_EXECUTABLE_PATH") or None
+        if executable_path and not os.path.exists(executable_path):
+            # .env.sample used to ship a literal "/path/to/chrome" placeholder.
+            # Falling back beats dying on a path the user never meant to set.
+            logger.warning(
+                "CHROME_EXECUTABLE_PATH=%s does not exist - ignoring it and"
+                " autodetecting instead",
+                executable_path,
+            )
+            executable_path = None
         if executable_path:
             logger.info("Using browser from CHROME_EXECUTABLE_PATH")
             return await self._playwright.chromium.launch(

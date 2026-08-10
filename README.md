@@ -42,7 +42,9 @@ Earth Rover가 스스로 주행합니다. **웹페이지에 목적지를 글로 
 >
 > ```bash
 > git pull
-> sed -i 's/^MISSION_SLUG=/# MISSION_SLUG=/' .env    # 그 다음 서버 재시작
+> sed -i 's/^MISSION_SLUG=/# MISSION_SLUG=/' .env
+> sed -i 's/^CHROME_EXECUTABLE_PATH=/# CHROME_EXECUTABLE_PATH=/' .env
+> # 그 다음 서버 재시작
 > ```
 >
 > `.env`는 레포에 없는 파일이라 **`git pull`로는 안 고쳐집니다.** `MISSION_SLUG`가
@@ -339,7 +341,19 @@ sed -i 's/^MISSION_SLUG=/# MISSION_SLUG=/' .env    # 주석 처리
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/     # 200이면 통과
 ```
 
-**2. `CHROME_EXECUTABLE_PATH`는 지워도 됩니다.** 이제 선택사항입니다.
+**2. `CHROME_EXECUTABLE_PATH` 지우기**
+
+예전 `.env.sample`에는 `"/path/to/chrome"`이라는 **플레이스홀더가 실제 값으로** 들어있었습니다.
+그대로 두면 `Failed to launch chromium because executable doesn't exist at /path/to/chrome`이
+납니다.
+
+```bash
+sed -i 's/^CHROME_EXECUTABLE_PATH=/# CHROME_EXECUTABLE_PATH=/' .env
+```
+
+이제 이 변수는 선택사항입니다. 없으면 설치된 Google Chrome → Playwright 번들 Chromium
+순으로 자동 탐색합니다. (존재하지 않는 경로가 들어와도 무시하고 자동 탐색으로 넘어가지만,
+`.env`는 정리해두는 게 낫습니다.)
 
 > **pyppeteer 시절에 받아둔 클론이라면** — 서버가 Playwright로 바뀌었으니 환경을 새로 만드는
 > 게 깔끔합니다. 예전 `rover-sdk`/`rover-policy` 환경은 지워도 됩니다.
