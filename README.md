@@ -38,13 +38,25 @@ Earth Rover가 스스로 주행합니다. **웹페이지에 목적지를 글로 
 
 **conda 환경은 하나(`rover`)뿐입니다.** 두 터미널 다 같은 환경을 씁니다.
 
+> ### 이미 clone 해둔 게 있으면 이 두 줄부터
+>
+> ```bash
+> git pull
+> sed -i 's/^MISSION_SLUG=/# MISSION_SLUG=/' .env    # 그 다음 서버 재시작
+> ```
+>
+> `.env`는 레포에 없는 파일이라 **`git pull`로는 안 고쳐집니다.** `MISSION_SLUG`가
+> 남아있으면 `/`를 포함한 모든 엔드포인트가 400
+> (`Call /start-mission endpoint to start a mission`)을 뱉습니다.
+> 자세히 → [업데이트 받기](#업데이트-받기)
+
 ```bash
 # ── 최초 1회 ────────────────────────────────────────────────────────────
 cd ~/frodobot_server-omnivla-edge-autonomy       # 자기 경로로
 conda env create -f environment.yml              # rover (Python 3.11)
 conda activate rover
 python -m playwright install chromium            # 빼먹으면 브라우저가 안 뜹니다
-cp .env.sample .env && vi .env                   # MISSION_SLUG 줄 삭제!
+cp .env.sample .env && vi .env                   # SDK_API_TOKEN, BOT_SLUG 채우기
 curl -L -o best.pth https://github.com/.../best.pth
 python -m policy.check_model --ckpt best.pth     # 오프라인 점검
 
