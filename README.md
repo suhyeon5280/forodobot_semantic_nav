@@ -49,9 +49,9 @@ curl -L -o best.pth https://github.com/.../best.pth
 python -m policy.check_model --ckpt best.pth     # 오프라인 점검
 
 # ── 매번 ────────────────────────────────────────────────────────────────
-# 터미널 1 — SDK 서버
+# 터미널 1 — SDK 서버 (다른 기기에서 페이지를 열려면 --bind 0.0.0.0:8000)
 cd ~/frodobot_server-omnivla-edge-autonomy && conda activate rover
-hypercorn main:app --bind 0.0.0.0:8000
+hypercorn main:app
 
 # 터미널 2 — 모델 (새 터미널, 같은 환경)
 cd ~/frodobot_server-omnivla-edge-autonomy && conda activate rover
@@ -324,20 +324,36 @@ git fetch origin && git reset --hard origin/main
 ```bash
 cd ~/frodobot_server-omnivla-edge-autonomy
 conda activate rover
-hypercorn main:app --bind 0.0.0.0:8000
+hypercorn main:app
 ```
 
-프롬프트가 `(rover)`로 바뀐 걸 확인하고 실행하세요. `Running on http://0.0.0.0:8000`이
+프롬프트가 `(rover)`로 바뀐 걸 확인하고 실행하세요. `Running on http://127.0.0.1:8000`이
 뜨면 서버가 산 겁니다. 이 터미널은 그대로 두세요 — 닫으면 서버가 죽습니다.
 
-> **hypercorn을 꼭 써야 하나?** 아닙니다. `main.py`는 평범한 FastAPI(ASGI) 앱이라
-> WebSocket도 HTTP/2도 안 씁니다. uvicorn도 그대로 됩니다:
-> `uvicorn main:app --host 0.0.0.0 --port 8000`. hypercorn을 기본으로 두는 건 공식
-> 레포가 그렇게 하고 `requirements.txt`에 이미 들어있기 때문입니다. `hypercorn: command
-> not found`가 났다면 hypercorn 잘못이 아니라 **환경을 activate 안 한 것**입니다.
+#### `--bind`는 언제 필요한가
 
-`--bind 0.0.0.0`은 **다른 컴퓨터의 브라우저**에서 페이지를 열기 위한 것입니다. 서버가 도는
-그 컴퓨터에서 직접 브라우저를 열 거면 빼도 됩니다(그러면 `127.0.0.1:8000`만 열립니다).
+`--bind`는 **접속할 주소가 아니라, 서버가 어느 네트워크 인터페이스에서 들을지**를 정하는
+값입니다. hypercorn의 기본값이 이미 `127.0.0.1:8000`이라 **한 대에서 다 돌리면 아무것도 안
+붙이면 됩니다.**
+
+| 상황 | 명령 |
+|---|---|
+| 서버·모델·브라우저 **전부 같은 컴퓨터** | `hypercorn main:app` (기본값 = `127.0.0.1:8000`) |
+| 폰·다른 노트북에서 페이지를 열고 싶다 | `hypercorn main:app --bind 0.0.0.0:8000` |
+
+`0.0.0.0`은 "모든 인터페이스에서 듣겠다"는 뜻이지 접속 주소가 아닙니다. 그렇게 띄워도
+같은 컴퓨터에서는 여전히 `http://localhost:8000`으로 들어갑니다. 다만 같은 네트워크의
+아무나 접속할 수 있게 되니, 혼자 쓸 거면 기본값이 낫습니다.
+
+기본값으로 띄워도 나머지는 그대로 동작합니다 — 헤드리스 브라우저는
+`http://127.0.0.1:8000/sdk`로, 모델 프로세스는 `http://localhost:8000`으로 붙는데 둘 다
+같은 머신의 루프백이기 때문입니다.
+
+> **hypercorn을 꼭 써야 하나?** 아닙니다. `main.py`는 평범한 FastAPI(ASGI) 앱이라
+> WebSocket도 HTTP/2도 안 씁니다. uvicorn도 그대로 됩니다: `uvicorn main:app`.
+> hypercorn을 기본으로 두는 건 공식 레포가 그렇게 하고 `requirements.txt`에 이미
+> 들어있기 때문입니다. `hypercorn: command not found`가 났다면 hypercorn 잘못이 아니라
+> **환경을 activate 안 한 것**입니다.
 
 서버가 떴는지 확인은 **세 번째 터미널**에서 (서버 터미널은 로그가 흐르고 있어서 명령을 못
 칩니다):
@@ -371,7 +387,7 @@ python -m policy.run_autonomy --ckpt best.pth
 
 ```bash
 cd ~/frodobot_server-omnivla-edge-autonomy
-conda run --no-capture-output -n rover hypercorn main:app --bind 0.0.0.0:8000        # 터미널 1
+conda run --no-capture-output -n rover hypercorn main:app                             # 터미널 1
 conda run --no-capture-output -n rover python -m policy.run_autonomy --ckpt best.pth # 터미널 2
 ```
 
@@ -412,7 +428,7 @@ conda 환경에서 빠져나오려면 `conda deactivate`. 환경을 지울 필�
 ```bash
 # 터미널 1
 cd ~/frodobot_server-omnivla-edge-autonomy && conda activate rover
-hypercorn main:app --bind 0.0.0.0:8000
+hypercorn main:app
 
 # 터미널 2
 cd ~/frodobot_server-omnivla-edge-autonomy && conda activate rover
@@ -596,6 +612,8 @@ CLIP의 77토큰을 넘으면 조용히 잘립니다.
 | 주행은 하는데 지시를 무시함 | 텔레메트리의 modality id가 7인지 확인, 더 짧고 구체적인 명사구로 시도 |
 | `no kernel image is available` | GPU에 비해 torch가 오래됨. `pip install --upgrade --force-reinstall torch torchvision` — conda 패키지 말고 pip으로, 버전 고정 없이 |
 | `hypercorn: command not found` / `ModuleNotFoundError` | `conda activate rover`를 안 했습니다. 프롬프트에 `(rover)`가 보이는지 확인하세요. hypercorn 잘못이 아닙니다 |
+| 모델 쪽에 `400 Client Error` | 서버가 400을 돌려준 것. `curl -i http://127.0.0.1:8000/v2/front`로 `detail`을 보세요 — `Call /start-mission...`이면 **`.env`의 `MISSION_SLUG`를 지우고 서버 재시작**, `Failed to retrieve tokens`면 `SDK_API_TOKEN`/`BOT_SLUG`가 틀린 것 |
+| 서버 로그의 `Running on http://0.0.0.0:8000` | 에러가 아니라 hypercorn이 정상 기동했다는 메시지입니다 |
 | `No usable browser found` / 브라우저가 안 뜸 | `python -m playwright install chromium`을 빼먹었습니다 |
 | 영상이 검게만 나옴 | Playwright 번들 Chromium에는 H.264 코덱이 없습니다. Google Chrome을 설치하거나 `.env`의 `CHROME_EXECUTABLE_PATH`로 지정하세요 |
 | `conda: command not found` | `conda init bash` 후 터미널을 새로 안 열었거나 conda 미설치 → [0단계](#0-conda-설치-확인) |
