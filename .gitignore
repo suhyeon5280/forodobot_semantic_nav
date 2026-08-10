@@ -1,0 +1,36 @@
+.DS_Store
+.env
+__pycache__/
+.vscode/
+.openclaw/
+
+# Openclaw workspace files (personal config — templates are in examples/openclaw/)
+/AGENTS.md
+/SOUL.md
+/IDENTITY.md
+/USER.md
+/TOOLS.md
+/HEARTBEAT.md
+/CLAUDE.md
+/MEMORY.md
+front.png
+
+node_modules/
+screenshots/*.png
+static/*.mp3
+static/*.wav
+
+# Recorded dataset sessions (images + logs) — uploaded to Hugging Face via upload_to_hf.py, not committed here
+/dataset/
+
+# Policy checkpoints (best.pth is ~415 MB, published as a release asset)
+*.pth
+
+# Conda envs normally live under $CONDA_PREFIX/envs, but ignore in-repo ones
+# (conda env create -p ./envs/...) and any leftover venvs from the pre-conda setup
+/envs/
+.venv-sdk/
+.venv-policy/
+
+# Speed constants measured per rover from the operator page's calibration panel
+policy/calibration.json

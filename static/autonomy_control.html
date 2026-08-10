@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Rover Autonomy — OmniVLA-edge</title>
+<style>
+  body {
+    margin: 0;
+    padding: 20px;
+    font-family: Arial, sans-serif;
+    background: #111;
+    color: #eee;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .hint { color: #888; font-size: 13px; margin-bottom: 18px; }
+  .layout { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+  .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 14px; }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: #888; margin: 0 0 10px; }
+  #view { display: block; width: 512px; max-width: 100%; border-radius: 4px; background: #000; }
+  #traj { display: block; background: #000; border-radius: 4px; }
+  .controls { display: flex; flex-direction: column; gap: 10px; min-width: 260px; }
+  input[type="text"] {
+    padding: 9px 10px;
+    font-size: 14px;
+    border: 1px solid #444;
+    border-radius: 6px;
+    background: #222;
+    color: #eee;
+  }
+  button {
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: bold;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    background: #37474f;
+    color: #eee;
+  }
+  button:disabled { opacity: 0.45; cursor: default; }
+  #startBtn { background: #2e7d32; }
+  #stopBtn { background: #37474f; }
+  #recordBtn.recording { background: #ef6c00; }
+  #recordBtn.recording::before { content: "● "; }
+  #estopBtn { background: #c62828; font-size: 16px; padding: 14px; }
+  .row { display: flex; gap: 8px; }
+  .row button { flex: 1; }
+  table { border-collapse: collapse; font-family: monospace; font-size: 13px; }
+  td { padding: 3px 10px 3px 0; }
+  td.k { color: #888; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 10px; font-size: 12px; font-weight: bold; }
+  .badge.on { background: #2e7d32; }
+  .badge.off { background: #444; color: #aaa; }
+  .badge.dry { background: #f9a825; color: #000; }
+  .badge.down { background: #c62828; }
+  .mono { font-family: monospace; font-size: 12px; color: #777; margin-left: 8px; }
+  .record-stats { font-family: monospace; font-size: 13px; color: #aaa; min-height: 18px; }
+  label.k { color: #888; font-size: 12px; margin-bottom: -6px; }
+  code { color: #9ccc65; }
+  .error { color: #ef5350; font-size: 13px; margin-top: 10px; min-height: 18px; max-width: 260px; }
+</style>
+</head>
+<body>
+  <h1>Rover Autonomy — OmniVLA-edge</h1>
+  <div class="hint">
+    The rover only moves while the status reads RUNNING. Press E-STOP or Space to
+    halt it at any time.
+    <br />
+    <span id="conn" class="badge off">connecting…</span>
+    <span id="conn-detail" class="mono"></span>
+  </div>
+
+  <div class="layout">
+    <div class="panel">
+      <h2>Front camera</h2>
+      <img id="view" alt="front camera" />
+    </div>
+
+    <div class="panel">
+      <h2>Predicted trajectory</h2>
+      <canvas id="traj" width="300" height="380"></canvas>
+    </div>
+
+    <div class="panel controls">
+      <h2>Control</h2>
+      <div><span id="status" class="badge off">PAUSED</span></div>
+      <input type="text" id="prompt" placeholder="e.g. the blue trash bin" autofocus />
+      <button id="setBtn">Set instruction (Enter)</button>
+      <div class="hint" style="margin: 0">
+        Takes effect on the next tick — you can redirect the rover mid-drive.
+      </div>
+      <div class="row">
+        <button id="startBtn">Start</button>
+        <button id="stopBtn">Stop</button>
+      </div>
+      <button id="recordBtn">Start Recording</button>
+      <button id="estopBtn">E-STOP</button>
+      <div class="hint" style="margin: 0">
+        E-STOP halts the rover through the SDK server directly, so it works even
+        if the policy process has died.
+      </div>
+      <div id="error" class="error"></div>
+    </div>
+
+    <div class="panel controls">
+      <h2>Speed calibration</h2>
+      <div class="hint" style="margin: 0">
+        Run once per rover, in a clear open space. <code>/control</code> takes
+        -1..1, not m/s, so the policy needs to know what full scale means.
+        Autonomy must be stopped.
+      </div>
+      <div class="row">
+        <button id="calLinBtn">Drive straight 10s</button>
+        <button id="calAngBtn">Spin 10s</button>
+      </div>
+      <div id="calStatus" class="record-stats"></div>
+      <label class="k">distance covered (m)</label>
+      <input type="text" id="calDist" placeholder="e.g. 4.2" />
+      <label class="k">revolutions turned</label>
+      <input type="text" id="calRev" placeholder="e.g. 1.5" />
+      <button id="calApplyBtn">Save calibration</button>
+      <div class="mono" style="margin-left: 0">
+        full scale: <span id="t-maxlin">—</span> m/s ·
+        <span id="t-maxang">—</span> rad/s
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Telemetry</h2>
+      <table>
+        <tr><td class="k">active instruction</td><td id="t-prompt">—</td></tr>
+        <tr><td class="k">linear (norm)</td><td id="t-linear">—</td></tr>
+        <tr><td class="k">angular (norm)</td><td id="t-angular">—</td></tr>
+        <tr><td class="k">v</td><td id="t-v">—</td></tr>
+        <tr><td class="k">omega</td><td id="t-w">—</td></tr>
+        <tr><td class="k">modality id</td><td id="t-modality">—</td></tr>
+        <tr><td class="k">inference</td><td id="t-infer">—</td></tr>
+        <tr><td class="k">loop</td><td id="t-loop">—</td></tr>
+        <tr><td class="k">ticks</td><td id="t-tick">—</td></tr>
+        <tr><td class="k">recording</td><td id="t-session">—</td></tr>
+      </table>
+    </div>
+  </div>
+
+<script>
+  const POLL_HZ = 4;
+  // Half-width of the trajectory plot in metres; the model predicts 8 waypoints
+  // that rarely reach beyond a couple of metres at these speeds.
+  const PLOT_HALF_WIDTH_M = 3.0;
+  const PLOT_FORWARD_M = 8.0;
+
+  // This page is served by the SDK server (:8000), but the policy runs in its
+  // own process on another port. Default to :8010 on the same host; override
+  // with ?policy=http://host:port. When the page is served by the policy itself
+  // the origin already matches, so the base stays empty.
+  const POLICY_BASE = (() => {
+    const override = new URLSearchParams(location.search).get("policy");
+    if (override) return override.replace(/\/$/, "");
+    if (location.port === "8010") return "";
+    return `${location.protocol}//${location.hostname}:8010`;
+  })();
+
+  // The SDK server. E-STOP goes straight here rather than through the policy,
+  // so it still halts the rover when the policy process is gone. Normally this
+  // page is served by the SDK server, so its own origin is the right answer.
+  const SDK_BASE = (() => {
+    const override = new URLSearchParams(location.search).get("sdk");
+    if (override) return override.replace(/\/$/, "");
+    if (location.port === "8010") return `${location.protocol}//${location.hostname}:8000`;
+    return location.origin;
+  })();
+
+  const el = (id) => document.getElementById(id);
+  const errorEl = el("error");
+  let promptDirty = false;
+  let connected = false;
+
+  el("conn-detail").textContent = POLICY_BASE || location.origin;
+  el("prompt").addEventListener("input", () => { promptDirty = true; });
+
+  function setConnected(ok, detail) {
+    connected = ok;
+    const badge = el("conn");
+    badge.textContent = ok ? "policy connected" : "policy offline";
+    badge.className = "badge " + (ok ? "on" : "down");
+
+    if (!ok) {
+      // Without the policy we do not know what the rover is doing, and leaving
+      // the last known "RUNNING" on screen would be a lie. Say so — unless we
+      // just e-stopped, in which case we do know it was told to halt.
+      const status = el("status");
+      const justStopped = Date.now() - estopAt < 10000;
+      status.textContent = justStopped ? "STOPPED (policy offline)" : "UNKNOWN";
+      status.className = "badge " + (justStopped ? "off" : "down");
+    }
+    // E-STOP is deliberately left enabled: it talks to the SDK server, not the
+    // policy, and it is exactly when the policy is dead that you need it.
+    ["startBtn", "stopBtn", "setBtn", "recordBtn", "calLinBtn", "calAngBtn",
+     "calApplyBtn"].forEach((id) => {
+      if (!ok) el(id).disabled = true;
+    });
+    if (!ok) {
+      errorEl.textContent =
+        detail || "Start it with: python -m policy.run_autonomy --ckpt best.pth";
+    }
+  }
+
+  async function send(action, extra = {}) {
+    try {
+      const res = await fetch(`${POLICY_BASE}/cmd`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, prompt: el("prompt").value, ...extra }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        errorEl.textContent = body.error || `HTTP ${res.status}`;
+        return;
+      }
+      errorEl.textContent = "";
+      promptDirty = false;
+      render(body);
+    } catch (e) {
+      errorEl.textContent = "Request failed: " + e.message;
+    }
+  }
+
+  let recording = false;
+  let estopAt = 0;
+  let localErrorAt = 0;
+
+  // Messages raised here (input validation, e-stop failures) must survive the
+  // next poll, which would otherwise overwrite the line with the policy's own
+  // error field a fraction of a second later.
+  function showError(message) {
+    errorEl.textContent = message;
+    localErrorAt = message ? Date.now() : 0;
+  }
+
+  // Halt the rover without going through the policy. /control latches the last
+  // command, so a dropped packet would leave it driving — send it repeatedly.
+  async function emergencyStop() {
+    let delivered = 0;
+    for (let i = 0; i < 3; i++) {
+      try {
+        const res = await fetch(`${SDK_BASE}/control`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command: { linear: 0, angular: 0 } }),
+        });
+        if (res.ok) delivered++;
+      } catch (e) {
+        /* keep trying the remaining attempts */
+      }
+    }
+    if (delivered) {
+      estopAt = Date.now();
+      errorEl.textContent = "";
+    } else {
+      errorEl.textContent = `E-STOP could not reach the SDK server at ${SDK_BASE}`;
+    }
+    // Then pause the loop so it stops issuing new commands. Quietly, because
+    // the rover is already stopped and the policy may well be the thing that died.
+    try {
+      await fetch(`${POLICY_BASE}/cmd`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "estop" }),
+      });
+    } catch (e) {
+      /* policy is down; the rover is stopped regardless */
+    }
+  }
+
+  el("startBtn").addEventListener("click", () => send("start"));
+  el("stopBtn").addEventListener("click", () => send("stop"));
+  el("estopBtn").addEventListener("click", emergencyStop);
+  el("setBtn").addEventListener("click", () => send("prompt"));
+  el("recordBtn").addEventListener("click", () => send("record", { on: !recording }));
+
+  // --- Speed calibration -------------------------------------------------
+  // The policy drives the timed run, not this page: if the tab were the timer
+  // and it closed mid-run, /control would latch and the rover would keep going.
+  const CAL_VALUE = 0.5;
+  const CAL_SECONDS = 10;
+
+  el("calLinBtn").addEventListener("click", () =>
+    send("calibrate_move", { kind: "linear", value: CAL_VALUE, seconds: CAL_SECONDS })
+  );
+  el("calAngBtn").addEventListener("click", () =>
+    send("calibrate_move", { kind: "angular", value: CAL_VALUE, seconds: CAL_SECONDS })
+  );
+
+  el("calApplyBtn").addEventListener("click", () => {
+    const distance = parseFloat(el("calDist").value);
+    const revolutions = parseFloat(el("calRev").value);
+    if (!(distance > 0) || !(revolutions > 0)) {
+      showError("Enter both the distance driven and the revolutions turned.");
+      return;
+    }
+    // The run was CAL_SECONDS long at CAL_VALUE of full scale, so full scale is
+    // the measured speed divided by CAL_VALUE.
+    send("calibrate_set", {
+      max_lin_mps: distance / CAL_SECONDS / CAL_VALUE,
+      max_ang_rps: (revolutions * 2 * Math.PI) / CAL_SECONDS / CAL_VALUE,
+    });
+  });
+
+  // Enter in the instruction box applies it without stopping the rover.
+  el("prompt").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      send("prompt");
+    }
+  });
+
+  // Space bar is an e-stop, so the operator never has to aim at a button.
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Space" && e.target.tagName !== "INPUT") {
+      e.preventDefault();
+      emergencyStop();
+    }
+  });
+
+  function drawTrajectory(waypoints) {
+    const canvas = el("traj");
+    const ctx = canvas.getContext("2d");
+    const { width, height } = canvas;
+    ctx.clearRect(0, 0, width, height);
+
+    // Robot frame: x forward (up on screen), y left (left on screen).
+    const toPx = (x, y) => [
+      width / 2 - (y / PLOT_HALF_WIDTH_M) * (width / 2),
+      height - (x / PLOT_FORWARD_M) * height,
+    ];
+
+    ctx.strokeStyle = "#333";
+    ctx.lineWidth = 1;
+    for (let m = 1; m < PLOT_FORWARD_M; m++) {
+      const [, py] = toPx(m, 0);
+      ctx.beginPath();
+      ctx.moveTo(0, py);
+      ctx.lineTo(width, py);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.moveTo(width / 2, 0);
+    ctx.lineTo(width / 2, height);
+    ctx.stroke();
+
+    if (!waypoints || !waypoints.length) return;
+
+    ctx.strokeStyle = "#2196f3";
+    ctx.fillStyle = "#64b5f6";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    let [px, py] = toPx(0, 0);
+    ctx.moveTo(px, py);
+    waypoints.forEach(([x, y]) => {
+      [px, py] = toPx(x, y);
+      ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    waypoints.forEach(([x, y]) => {
+      const [cx, cy] = toPx(x, y);
+      ctx.beginPath();
+      ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  function render(state) {
+    const badge = el("status");
+    if (state.running) {
+      badge.textContent = state.dry_run ? "RUNNING (DRY RUN)" : "RUNNING";
+      badge.className = "badge " + (state.dry_run ? "dry" : "on");
+    } else {
+      badge.textContent = "PAUSED";
+      badge.className = "badge off";
+    }
+    // render() only runs while connected, so this undoes setConnected(false).
+    el("startBtn").disabled = state.running;
+    el("stopBtn").disabled = !state.running;
+    el("estopBtn").disabled = false;
+    el("setBtn").disabled = false;
+    el("recordBtn").disabled = false;
+
+    recording = !!state.record;
+    el("recordBtn").textContent = recording ? "Stop Recording" : "Start Recording";
+    el("recordBtn").classList.toggle("recording", recording);
+
+    const calibrating = !!state.calibrating;
+    el("calLinBtn").disabled = calibrating || state.running;
+    el("calAngBtn").disabled = calibrating || state.running;
+    el("calApplyBtn").disabled = calibrating;
+    el("calStatus").textContent = calibrating
+      ? `${state.calibrating} run: ${state.calibration_left.toFixed(1)}s left — ` +
+        `press E-STOP to abort`
+      : "";
+    el("t-maxlin").textContent = state.max_lin_mps.toFixed(3);
+    el("t-maxang").textContent = state.max_ang_rps.toFixed(3);
+
+    if (!promptDirty && state.prompt !== null && state.prompt !== undefined) {
+      el("prompt").value = state.prompt;
+    }
+    // Shown separately from the input box so you can see what the policy is
+    // actually running while you type a replacement.
+    el("t-prompt").textContent = state.prompt || "—";
+    if (state.frame) {
+      el("view").src = "data:image/jpeg;base64," + state.frame;
+    }
+
+    el("t-linear").textContent = state.linear.toFixed(3);
+    el("t-angular").textContent = state.angular.toFixed(3);
+    el("t-v").textContent = state.v_mps.toFixed(3) + " m/s";
+    el("t-w").textContent = state.w_rps.toFixed(3) + " rad/s";
+    el("t-modality").textContent = state.modality_id ?? "—";
+    el("t-infer").textContent = state.infer_ms.toFixed(0) + " ms";
+    el("t-loop").textContent = state.loop_ms.toFixed(0) + " ms";
+    el("t-tick").textContent = state.tick;
+    el("t-session").textContent = state.session ?? "off";
+    if (Date.now() - localErrorAt > 4000) {
+      errorEl.textContent = state.error || "";
+    }
+
+    drawTrajectory(state.waypoints);
+  }
+
+  async function poll() {
+    try {
+      const res = await fetch(`${POLICY_BASE}/state`);
+      if (!res.ok) {
+        setConnected(false, `Policy responded HTTP ${res.status}`);
+        return;
+      }
+      if (!connected) {
+        setConnected(true);
+        errorEl.textContent = "";
+      }
+      render(await res.json());
+    } catch (e) {
+      // The page is served by the SDK server, so it loads whether or not the
+      // policy process is up. Say which one is missing.
+      setConnected(false, `No policy process at ${POLICY_BASE || location.origin}`);
+    }
+  }
+
+  setInterval(poll, 1000 / POLL_HZ);
+  poll();
+</script>
+</body>
+</html>
