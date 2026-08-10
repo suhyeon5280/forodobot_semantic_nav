@@ -154,7 +154,23 @@ class BrowserService:
                 "console",
                 lambda msg: print(f"[browser console:{msg.type}] {msg.text}"),
             )
-            await self._page.goto(SDK_PAGE_URL, wait_until="domcontentloaded")
+            response = await self._page.goto(
+                SDK_PAGE_URL, wait_until="domcontentloaded"
+            )
+            # A 4xx here serves FastAPI's error JSON instead of the operator
+            # page, so #join is simply absent. Say that, rather than letting the
+            # click time out 30s later on a mystery selector.
+            if response is not None and not response.ok:
+                body = (await response.text())[:300].replace("\n", " ")
+                hint = ""
+                if response.status in (401, 403):
+                    hint = " -> check SDK_API_TOKEN and BOT_SLUG in .env"
+                elif "start-mission" in body:
+                    hint = " -> remove MISSION_SLUG from .env"
+                raise RuntimeError(
+                    f"{SDK_PAGE_URL} returned HTTP {response.status}:"
+                    f" {body}{hint}"
+                )
             await self._page.click("#join")
             # Wait on RTM readiness, not on a <video> element: control and
             # telemetry must still come up when a camera is offline.
