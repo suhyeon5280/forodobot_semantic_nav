@@ -1,13 +1,12 @@
-# Dependencies for the OmniVLA-edge policy process only.
+# Dependencies for the OmniVLA-edge policy process.
 #
-# Install these into a SEPARATE conda env from the SDK server — the server runs
-# on Python 3.9 with pyppeteer, and mixing torch into it buys nothing.
-# environment-policy.yml wraps this file, so from the repo root:
+# Normally you do not install this file by hand — environment.yml in the repo
+# root pulls it in along with the server's requirements.txt:
 #
-#   conda env create -f environment-policy.yml
-#   conda activate rover-policy
+#   conda env create -f environment.yml
+#   conda activate rover
 #
-# Or into an existing env: pip install -r policy/requirements.txt
+# Into an existing env: pip install -r policy/requirements.txt
 #
 # torch stays a pip install (not a conda package) and stays unpinned — recent
 # GPUs need the newest CUDA build, and conda-forge's pytorch tends to lag.

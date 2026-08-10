@@ -55,8 +55,9 @@ Copy these files into your workspace directory:
 From the repo root:
 
 ```bash
-conda env create -f environment-sdk.yml   # first time only
-conda activate rover-sdk
+conda env create -f environment.yml       # first time only
+conda activate rover
+python -m playwright install chromium     # first time only
 hypercorn main:app --reload
 ```
 

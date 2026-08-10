@@ -3,7 +3,7 @@ Offline check: does the checkpoint load, does a forward pass run, how fast?
 
 Run this before taking the rover outside — it needs no server and no rover.
 
-    conda activate rover-policy
+    conda activate rover
     python -m policy.check_model --ckpt best.pth
     python -m policy.check_model --image screenshots/front.png
 """

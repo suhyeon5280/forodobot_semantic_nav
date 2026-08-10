@@ -3,8 +3,8 @@ Drive the rover with OmniVLA-edge.
 
 Runs as its own process against an already-running SDK server:
 
-    conda activate rover-sdk    && hypercorn main:app    # terminal 1, owns the rover
-    conda activate rover-policy && python -m policy.run_autonomy --ckpt best.pth
+    conda activate rover && hypercorn main:app             # terminal 1, owns the rover
+    conda activate rover && python -m policy.run_autonomy --ckpt best.pth  # terminal 2
 
 Then open http://localhost:8000/static/autonomy_control.html, type where the
 rover should go, and press Start. The instruction is normally typed there rather

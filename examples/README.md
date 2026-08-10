@@ -6,20 +6,15 @@ This folder contains Python examples demonstrating various capabilities of the E
 
 Make sure the SDK server is running on `http://localhost:8000` before running any examples.
 
-The examples run in the SDK server's conda env (`rover-sdk`, created from
-`environment-sdk.yml` in the repo root). `requests`, `aiohttp`, `numpy` and
+The examples run in the project's conda env (`rover`, created from
+`environment.yml` in the repo root). `requests`, `aiohttp`, `numpy` and
 `opencv-python-headless` are already in it — only the keyboard example needs an extra.
 
 ```bash
-conda activate rover-sdk
+conda activate rover
 
 # For keyboard control example
 pip install keyboard
-
-# Or a standalone env just for the examples
-conda create -n rover-examples python=3.10 -y
-conda activate rover-examples
-pip install requests aiohttp numpy opencv-python keyboard
 ```
 
 ## Examples Overview

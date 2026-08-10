@@ -1,0 +1,27 @@
+# Single conda env for both processes — SDK server and OmniVLA-edge policy.
+#
+#   conda env create -f environment.yml
+#   conda activate rover
+#   python -m playwright install chromium
+#
+# One env is enough now: the server used to be pinned to Python 3.9 by
+# pyppeteer, which is gone (upstream moved to Playwright). Nothing here needs a
+# specific interpreter any more.
+#
+# python=3.11 is chosen by the pinned server deps, not by preference:
+# numpy==1.26.4 and opencv-python-headless==4.9.0.80 have no 3.13 wheels.
+name: rover
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.11
+  - pip
+  - git                  # policy/requirements.txt installs CLIP from git+https
+  - pip:
+      # SDK server — matches upstream frodobots-org/earth-rovers-sdk exactly
+      - -r requirements.txt
+      # Policy. torch stays unpinned and pip-installed (not a conda package):
+      # recent GPUs need the newest CUDA build and conda-forge's pytorch lags.
+      - -r policy/requirements.txt

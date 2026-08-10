@@ -14,6 +14,7 @@ Earth Rover가 스스로 주행합니다. **웹페이지에 목적지를 글로 
 - [구조](#구조)
 - [준비물](#준비물)
 - [최초 1회 설정](#최초-1회-설정)
+- [업데이트 받기](#업데이트-받기)
 - [실행](#실행)
 - [웹페이지 사용법](#웹페이지-사용법)
 - [첫 주행](#첫-주행)
@@ -35,23 +36,25 @@ Earth Rover가 스스로 주행합니다. **웹페이지에 목적지를 글로 
 **서버와 모델은 같은 컴퓨터 한 대**에서 터미널 두 개로 돕니다. 각 단계 설명은 아래 링크를
 따라가세요.
 
+**conda 환경은 하나(`rover`)뿐입니다.** 두 터미널 다 같은 환경을 씁니다.
+
 ```bash
 # ── 최초 1회 ────────────────────────────────────────────────────────────
-cd ~/frodobot_server-omnivla-edge-autonomy      # 자기 경로로
-conda --version                                  # 없으면 Miniconda 설치 → 0단계
-curl -L -o best.pth https://github.com/.../best.pth   # 1단계
-cp .env.sample .env && vi .env                   # MISSION_SLUG 줄 삭제! → 2단계
-conda env create -f environment-sdk.yml          # rover-sdk    (Python 3.9)
-conda env create -f environment-policy.yml       # rover-policy (Python 3.10)
-conda activate rover-policy && python -m policy.check_model --ckpt best.pth   # 5단계
+cd ~/frodobot_server-omnivla-edge-autonomy       # 자기 경로로
+conda env create -f environment.yml              # rover (Python 3.11)
+conda activate rover
+python -m playwright install chromium            # 빼먹으면 브라우저가 안 뜹니다
+cp .env.sample .env && vi .env                   # MISSION_SLUG 줄 삭제!
+curl -L -o best.pth https://github.com/.../best.pth
+python -m policy.check_model --ckpt best.pth     # 오프라인 점검
 
 # ── 매번 ────────────────────────────────────────────────────────────────
-# 터미널 1
-cd ~/frodobot_server-omnivla-edge-autonomy && conda activate rover-sdk
+# 터미널 1 — SDK 서버
+cd ~/frodobot_server-omnivla-edge-autonomy && conda activate rover
 hypercorn main:app --bind 0.0.0.0:8000
 
-# 터미널 2 (새 터미널)
-cd ~/frodobot_server-omnivla-edge-autonomy && conda activate rover-policy
+# 터미널 2 — 모델 (새 터미널, 같은 환경)
+cd ~/frodobot_server-omnivla-edge-autonomy && conda activate rover
 python -m policy.run_autonomy --ckpt best.pth --dry-run   # 첫 주행은 반드시 --dry-run
 
 # 브라우저: http://localhost:8000/static/autonomy_control.html
@@ -81,8 +84,10 @@ python -m policy.run_autonomy --ckpt best.pth --dry-run   # 첫 주행은 반드
                      └──────────────────────────────────────┘
 ```
 
-**SDK 서버**는 원본 코드 그대로입니다(`main.py` 수정 없음). 헤드리스 Chrome이 로봇의
-Agora 채널에 접속하고, 서버는 그걸 HTTP로 열어줍니다.
+**SDK 서버**는 `main.py` 수정 없이 원본 그대로입니다. 헤드리스 브라우저가 로봇의 Agora
+채널에 접속하고, 서버는 그걸 HTTP로 열어줍니다.
+([browser_service.py](browser_service.py)만 공식 레포를 따라 Playwright로 옮겼습니다 —
+아래 [브라우저 드라이버](#브라우저-드라이버-pyppeteer--playwright) 참고.)
 
 **모델 프로세스**는 초당 3번 돕니다: 카메라 프레임을 받아 → 최근 6프레임과 지시문으로
 추론 → 예측 궤적을 주행 명령으로 변환 → 전송.
@@ -100,15 +105,16 @@ Agora 채널에 접속하고, 서버는 그걸 HTTP로 열어줍니다.
 - **Earth Rover**와 [SDK 토큰](https://my.frodobots.com/owner/settings)
 - **두 프로세스를 돌릴 머신 1대**
   - NVIDIA GPU (모델이 **CUDA 전용**입니다 — [동작 원리](#동작-원리) 참고)
-  - **conda** (Miniconda 또는 Anaconda) — Python 버전은 conda가 환경별로 깔아줍니다.
-    서버는 3.9, 모델은 3.10 이상(최신 torch 요구사항)을 씁니다.
-  - Google Chrome
-- **`best.pth`** — 레포에 없습니다. [릴리스에서 받으세요](#1-체크포인트-받기).
+  - **conda** (Miniconda 또는 Anaconda) — Python은 conda가 깔아줍니다(3.11)
+  - 브라우저는 `playwright install chromium`이 알아서 받습니다. Google Chrome이 설치돼
+    있으면 그쪽을 먼저 씁니다 — Chrome은 H.264 코덱이 있어서 일부 로봇 스트림이 검게
+    나오는 걸 막아줍니다.
+- **`best.pth`** — 레포에 없습니다. [릴리스에서 받으세요](#2-체크포인트-받기).
 
 브라우저는 서버에 접속만 되면 어느 컴퓨터에서 열어도 됩니다.
 
 > **두 프로세스는 반드시 같은 머신에서** 돌아야 합니다.
-> [browser_service.py](browser_service.py)가 헤드리스 Chrome을
+> [browser_service.py](browser_service.py)가 헤드리스 브라우저를
 > `http://127.0.0.1:8000/sdk`로 띄우기 때문에, SDK 서버는 자기 머신의 8000 포트여야
 > 합니다.
 
@@ -126,11 +132,10 @@ Agora 채널에 접속하고, 서버는 그걸 HTTP로 열어줍니다.
 cd ~/frodobot_server-omnivla-edge-autonomy    # 자기 경로로
 
 pwd                    # 지금 위치
-ls main.py policy/ environment-sdk.yml environment-policy.yml
+ls main.py policy/ environment.yml
 ```
 
-`ls`가 네 개 다 찍히면 제대로 온 겁니다. `No such file or directory`가 뜨면 아직 레포
-밖입니다.
+세 개 다 찍히면 제대로 온 겁니다. `No such file or directory`가 뜨면 아직 레포 밖입니다.
 
 > 새 터미널을 열 때마다 `cd`부터 다시 해야 합니다. 코드가 `static/`, `dataset/`,
 > `policy/calibration.json`을 **상대 경로**로 쓰기 때문에, 다른 디렉터리에서 실행하면
@@ -159,7 +164,49 @@ bash ~/miniconda.sh -b -p ~/miniconda3
 conda --version        # 다시 확인
 ```
 
-### 1. 체크포인트 받기
+### 1. conda 환경 만들기
+
+**환경은 하나면 됩니다.** 서버와 모델이 같이 들어갑니다.
+
+```bash
+conda env create -f environment.yml     # rover (Python 3.11)
+conda activate rover
+```
+
+프롬프트가 `(rover)`로 바뀝니다. torch, CLIP, EfficientNet을 받느라 몇 GB, 몇 분 걸립니다.
+
+그 다음 **헤드리스 브라우저를 받습니다. 이 줄을 빼먹으면 서버가 브라우저를 못 띄웁니다:**
+
+```bash
+python -m playwright install chromium
+```
+
+Google Chrome이 이미 깔려 있으면 서버가 그쪽을 먼저 씁니다(H.264 코덱 때문에 영상이 더
+잘 나옵니다). 특정 브라우저를 강제하려면 `.env`의 `CHROME_EXECUTABLE_PATH`를 쓰세요 —
+**설정 안 해도 됩니다.**
+
+잘 만들어졌는지, **GPU가 실제로 잡히는지**까지 확인하세요:
+
+```bash
+python --version       # Python 3.11.x
+which hypercorn        # .../envs/rover/bin/hypercorn
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+```
+
+`True`가 나와야 합니다. `False`면 여기서 멈추고 드라이버/torch부터 해결하세요 — **모델은
+CUDA 전용이라 CPU로는 아예 못 돕니다.** torch는 일부러 conda 패키지가 아니라 **pip으로,
+버전 고정 없이** 받습니다. RTX 50 시리즈(Blackwell)는 최신 CUDA 빌드가 필요한데
+conda-forge의 pytorch는 한 발 늦어서, 구버전이 깔리면 첫 추론에서 `no kernel image`
+에러가 납니다.
+
+환경을 고쳐 만들려면:
+
+```bash
+conda env update -f environment.yml --prune   # yml 변경분만 반영
+conda env remove -n rover                     # 통째로 지우고 다시 create
+```
+
+### 2. 체크포인트 받기
 
 `best.pth`는 약 415MB로 GitHub의 파일당 100MB 제한을 넘습니다. 그래서 커밋하지 않고
 **릴리스 첨부 파일**로 올려두었습니다. 릴리스 첨부 파일은 git 히스토리 밖에 있어서
@@ -176,7 +223,7 @@ curl -L -o best.pth \
 ls -lh best.pth        # 415M 근처면 정상. 몇 KB면 다운로드 실패(HTML 에러 페이지)
 ```
 
-### 2. `.env` 만들기
+### 3. `.env` 만들기
 
 이 파일이 없으면 **서버가 인증 단계에서 죽습니다.** 레포 루트에 `.env`라는 이름으로
 만드세요.
@@ -185,94 +232,25 @@ ls -lh best.pth        # 415M 근처면 정상. 몇 KB면 다운로드 실패(HT
 cp .env.sample .env
 ```
 
-복사했다면 **`.env.sample`에 들어있는 `MISSION_SLUG` 줄을 반드시 지우세요** (아래 두 번째
-주의사항). 최종적으로 이런 내용이면 됩니다:
+복사했다면 **`.env.sample`에 들어있는 `MISSION_SLUG` 줄을 반드시 지우세요.** 넣어두면 미션
+모드가 되어 모든 엔드포인트가 `/start-mission`을 먼저 요구합니다. 자유 주행하려면 아예
+빼야 합니다.
+
+최종적으로 이 네 줄이면 됩니다:
 
 ```bash
 SDK_API_TOKEN="발급받은_토큰"
 BOT_SLUG="봇_슬러그"
-CHROME_EXECUTABLE_PATH="/usr/bin/google-chrome"
 IMAGE_FORMAT=jpeg
 IMAGE_QUALITY=0.8
 ```
 
-Chrome 경로는 직접 확인해서 넣으세요:
+`CHROME_EXECUTABLE_PATH`는 **이제 안 넣어도 됩니다.** 서버가 알아서 Google Chrome →
+Playwright 번들 Chromium 순으로 찾습니다. 특정 브라우저를 강제할 때만 쓰세요.
 
-```bash
-which google-chrome    # 보통 /usr/bin/google-chrome
-```
+### 4. 오프라인 점검
 
-걸리기 쉬운 두 가지:
-
-- `CHROME_EXECUTABLE_PATH`의 기본값이 [browser_service.py](browser_service.py)에
-  **macOS 경로**로 박혀 있습니다. Linux면 반드시 설정하세요.
-- **`MISSION_SLUG`는 넣지 마세요.** 넣으면 미션 모드가 되어 모든 엔드포인트가
-  `/start-mission`을 먼저 요구합니다. 자유 주행하려면 아예 빼야 합니다.
-
-### 3. SDK 서버 환경 (conda)
-
-한 대에 conda 환경을 **두 개** 만듭니다. 이게 서버용입니다.
-
-```bash
-conda env create -f environment-sdk.yml     # rover-sdk (Python 3.9)
-```
-
-몇 분 걸립니다. 끝나면 이렇게 확인하세요:
-
-```bash
-conda activate rover-sdk
-python --version       # Python 3.9.x
-which hypercorn        # .../envs/rover-sdk/bin/hypercorn
-conda deactivate
-```
-
-`conda deactivate`로 빠져나오면 프롬프트가 다시 `(base)`로 돌아옵니다.
-
-### 4. 모델 환경 (서버와 분리)
-
-```bash
-conda env create -f environment-policy.yml  # rover-policy (Python 3.10)
-```
-
-**환경을 반드시 두 개로 나누세요.** 서버는 pyppeteer를 쓰는 3.9 환경이고, 거기에 torch를
-섞어봐야 얻는 게 없습니다. 모델을 재설치할 때 서버 환경이 같이 깨지는 것만 손해입니다.
-
-torch, CLIP, EfficientNet을 받느라 몇 GB 걸립니다. torch는 일부러 conda 패키지가 아니라
-**pip으로, 버전 고정 없이** 받습니다. 최신 GPU에서는 이게 중요합니다 — **RTX 50
-시리즈(Blackwell)는 최신 CUDA 빌드가 필요**한데, conda-forge의 pytorch 빌드는 보통 한 발
-늦고, 구버전 torch가 깔리면 첫 추론에서 `no kernel image` 에러가 납니다.
-
-환경이 잘 만들어졌는지, **GPU가 실제로 잡히는지**까지 확인하세요:
-
-```bash
-conda activate rover-policy
-python --version       # Python 3.10.x
-python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
-```
-
-`True`와 GPU 이름이 나와야 합니다. `False`면 여기서 멈추고 드라이버/torch부터
-해결하세요 — **모델은 CUDA 전용이라 CPU로는 아예 못 돕니다.**
-
-두 환경이 다 만들어졌는지 한눈에 보려면:
-
-```bash
-conda env list
-# base            /home/you/miniconda3
-# rover-policy    /home/you/miniconda3/envs/rover-policy
-# rover-sdk       /home/you/miniconda3/envs/rover-sdk
-```
-
-환경을 고쳐 만들고 싶으면:
-
-```bash
-conda env update -f environment-policy.yml --prune   # yml 변경분만 반영
-conda env remove -n rover-policy                     # 통째로 지우고 다시 create
-```
-
-### 5. 오프라인 점검
-
-서버도 로봇도 필요 없습니다. 바로 위에서 `rover-policy`를 activate한 상태 그대로 실행하면
-됩니다 (새 터미널이면 `cd 레포루트` → `conda activate rover-policy` 먼저).
+서버도 로봇도 필요 없습니다. `(rover)` 환경에서 레포 루트에 있으면 바로 실행됩니다.
 
 ```bash
 python -m policy.check_model --ckpt best.pth
@@ -296,28 +274,67 @@ python -m policy.check_model --ckpt best.pth \
 
 ---
 
+## 업데이트 받기
+
+로봇을 돌리는 컴퓨터가 개발하는 컴퓨터와 다르다면, 이미 `git clone` 해둔 쪽에서는 이렇게
+갱신합니다. **`git pull`만으로는 부족합니다** — 의존성이 바뀌었으면 환경도 같이 갱신해야
+합니다.
+
+```bash
+cd ~/frodobot_server-omnivla-edge-autonomy
+git pull
+
+conda activate rover
+conda env update -f environment.yml --prune     # requirements가 바뀌었을 때
+python -m playwright install chromium           # 브라우저가 아직 없다면
+```
+
+`git pull`이 로컬 변경 때문에 막히면, 그 컴퓨터에서 고친 게 없는 경우엔 이걸로 덮어씁니다:
+
+```bash
+git fetch origin && git reset --hard origin/main
+```
+
+`.env`, `best.pth`, `dataset/`은 gitignore라 pull이 건드리지 않습니다. 그대로 남습니다.
+
+> **pyppeteer 시절에 받아둔 클론이라면** — 서버가 Playwright로 바뀌었으니 환경을 새로 만드는
+> 게 깔끔합니다. 예전 `rover-sdk`/`rover-policy` 환경은 지워도 됩니다.
+>
+> ```bash
+> conda env remove -n rover-sdk
+> conda env remove -n rover-policy
+> conda env create -f environment.yml
+> conda activate rover
+> python -m playwright install chromium
+> ```
+
+---
+
 ## 실행
 
 **같은 컴퓨터에서 터미널 두 개**를 띄웁니다. 서버컴과 모델컴이 따로 있는 게 아니라, 한
 대에서 프로세스 두 개가 도는 구조입니다. 두 터미널 모두 매번 이 세 가지를 순서대로 합니다:
 
 1. **`cd` 레포 루트** — 상대 경로를 쓰기 때문에 필수
-2. **`conda activate`** — 터미널마다 **서로 다른** 환경
+2. **`conda activate rover`** — 두 터미널 **같은 환경**입니다
 3. 프로세스 실행
 
-터미널 하나에서 두 환경을 번갈아 activate 하지 마세요. 서버는 서버 터미널에서, 모델은
-모델 터미널에서 계속 살아있어야 합니다.
-
-### 터미널 1 — SDK 서버 (`rover-sdk`)
+### 터미널 1 — SDK 서버
 
 ```bash
 cd ~/frodobot_server-omnivla-edge-autonomy
-conda activate rover-sdk
+conda activate rover
 hypercorn main:app --bind 0.0.0.0:8000
 ```
 
-프롬프트가 `(rover-sdk)`로 바뀐 걸 확인하고 실행하세요. `Running on http://0.0.0.0:8000`이
+프롬프트가 `(rover)`로 바뀐 걸 확인하고 실행하세요. `Running on http://0.0.0.0:8000`이
 뜨면 서버가 산 겁니다. 이 터미널은 그대로 두세요 — 닫으면 서버가 죽습니다.
+
+> **hypercorn을 꼭 써야 하나?** 아닙니다. `main.py`는 평범한 FastAPI(ASGI) 앱이라
+> WebSocket도 HTTP/2도 안 씁니다. uvicorn도 그대로 됩니다:
+> `uvicorn main:app --host 0.0.0.0 --port 8000`. hypercorn을 기본으로 두는 건 공식
+> 레포가 그렇게 하고 `requirements.txt`에 이미 들어있기 때문입니다. `hypercorn: command
+> not found`가 났다면 hypercorn 잘못이 아니라 **환경을 activate 안 한 것**입니다.
 
 `--bind 0.0.0.0`은 **다른 컴퓨터의 브라우저**에서 페이지를 열기 위한 것입니다. 서버가 도는
 그 컴퓨터에서 직접 브라우저를 열 거면 빼도 됩니다(그러면 `127.0.0.1:8000`만 열립니다).
@@ -329,20 +346,20 @@ hypercorn main:app --bind 0.0.0.0:8000
 curl -s http://127.0.0.1:8000/data | head -c 300
 ```
 
-### 터미널 2 — 모델 (`rover-policy`)
+### 터미널 2 — 모델
 
 **새 터미널을 열고** — 터미널 1은 서버가 점유 중입니다:
 
 ```bash
 cd ~/frodobot_server-omnivla-edge-autonomy
-conda activate rover-policy
+conda activate rover
 python -m policy.run_autonomy --ckpt best.pth
 ```
 
-프롬프트가 `(rover-policy)`인지 확인하세요. `(rover-sdk)`인 채로 실행하면
-`ModuleNotFoundError: No module named 'torch'`가 납니다 — 환경을 잘못 고른 겁니다.
+프롬프트가 `(rover)`인지 확인하세요. `(base)`인 채로 실행하면
+`ModuleNotFoundError: No module named 'torch'`가 납니다 — activate를 빼먹은 겁니다.
 
-서버의 헤드리스 Chrome이 로봇의 Agora 채널에 붙어 첫 프레임을 뱉을 때까지 최대 1분
+서버의 헤드리스 브라우저가 로봇의 Agora 채널에 붙어 첫 프레임을 뱉을 때까지 최대 1분
 기다립니다. `operator UI: ...` 로그가 뜨면 준비 완료입니다.
 
 **첫 주행이라면 여기서 `--dry-run`을 붙이세요** → [첫 주행](#첫-주행)
@@ -353,13 +370,9 @@ python -m policy.run_autonomy --ckpt best.pth
 `operator UI: ...` 같은 로그가 실시간으로 안 보입니다.
 
 ```bash
-# 터미널 1
-cd ~/frodobot_server-omnivla-edge-autonomy && \
-  conda run --no-capture-output -n rover-sdk hypercorn main:app --bind 0.0.0.0:8000
-
-# 터미널 2
-cd ~/frodobot_server-omnivla-edge-autonomy && \
-  conda run --no-capture-output -n rover-policy python -m policy.run_autonomy --ckpt best.pth
+cd ~/frodobot_server-omnivla-edge-autonomy
+conda run --no-capture-output -n rover hypercorn main:app --bind 0.0.0.0:8000        # 터미널 1
+conda run --no-capture-output -n rover python -m policy.run_autonomy --ckpt best.pth # 터미널 2
 ```
 
 ### 브라우저
@@ -398,11 +411,11 @@ conda 환경에서 빠져나오려면 `conda deactivate`. 환경을 지울 필�
 
 ```bash
 # 터미널 1
-cd ~/frodobot_server-omnivla-edge-autonomy && conda activate rover-sdk
+cd ~/frodobot_server-omnivla-edge-autonomy && conda activate rover
 hypercorn main:app --bind 0.0.0.0:8000
 
 # 터미널 2
-cd ~/frodobot_server-omnivla-edge-autonomy && conda activate rover-policy
+cd ~/frodobot_server-omnivla-edge-autonomy && conda activate rover
 python -m policy.run_autonomy --ckpt best.pth
 
 # 브라우저: http://localhost:8000/static/autonomy_control.html
@@ -440,7 +453,7 @@ python -m policy.run_autonomy --ckpt best.pth
 
 ```bash
 cd ~/frodobot_server-omnivla-edge-autonomy
-conda activate rover-policy
+conda activate rover
 python -m policy.run_autonomy --ckpt best.pth --dry-run
 ```
 
@@ -581,11 +594,13 @@ CLIP의 77토큰을 넘으면 조용히 잘립니다.
 | `--dry-run`에서 궤적이 노이즈 | 전처리가 파인튜닝 때와 다르거나 카메라 화각이 학습 분포 밖. `--context-stride`부터 확인 |
 | 커브를 계속 짧게 자름 / 크게 돎 | [캘리브레이션](#속도-캘리브레이션) |
 | 주행은 하는데 지시를 무시함 | 텔레메트리의 modality id가 7인지 확인, 더 짧고 구체적인 명사구로 시도 |
-| `no kernel image is available` | GPU에 비해 torch가 오래됨. `conda activate rover-policy` 후 `pip install --upgrade --force-reinstall torch torchvision` — conda 패키지 말고 pip으로, 버전 고정 없이 |
-| `ModuleNotFoundError: torch` / `hypercorn: command not found` | 환경을 잘못 골랐습니다. 프롬프트의 `(rover-...)`를 보세요 — 서버는 `rover-sdk`, 모델은 `rover-policy`. `conda env list`의 `*`로도 확인됩니다 |
+| `no kernel image is available` | GPU에 비해 torch가 오래됨. `pip install --upgrade --force-reinstall torch torchvision` — conda 패키지 말고 pip으로, 버전 고정 없이 |
+| `hypercorn: command not found` / `ModuleNotFoundError` | `conda activate rover`를 안 했습니다. 프롬프트에 `(rover)`가 보이는지 확인하세요. hypercorn 잘못이 아닙니다 |
+| `No usable browser found` / 브라우저가 안 뜸 | `python -m playwright install chromium`을 빼먹었습니다 |
+| 영상이 검게만 나옴 | Playwright 번들 Chromium에는 H.264 코덱이 없습니다. Google Chrome을 설치하거나 `.env`의 `CHROME_EXECUTABLE_PATH`로 지정하세요 |
 | `conda: command not found` | `conda init bash` 후 터미널을 새로 안 열었거나 conda 미설치 → [0단계](#0-conda-설치-확인) |
 | `CondaError: Run 'conda init' before 'conda activate'` | 같은 원인. 새 터미널을 열거나 `source ~/.bashrc` |
-| `conda env create`가 CLIP에서 실패 | 환경에 git이 없음(`environment-policy.yml`이 깔아줍니다). 사내망이면 `git+https://` 접근 여부부터 확인 |
+| `conda env create`가 CLIP에서 실패 | 환경에 git이 없음(`environment.yml`이 깔아줍니다). 사내망이면 `git+https://` 접근 여부부터 확인 |
 | `torch.cuda.is_available()`이 `False` | NVIDIA 드라이버(`nvidia-smi`) 확인 후 torch 재설치. **CPU로는 못 돕니다** |
 | 레포 폴더에서만 `python`이 이상하게 동작 | pyenv를 쓰는 경우, 레포의 `.python-version`(`venv39`)이 conda보다 먼저 잡힙니다. 그 파일을 지우거나 pyenv를 끄세요 |
 | 페이지가 404 / 캘리브레이션이 안 보임 | 레포 루트가 아닌 곳에서 실행. `pwd` 확인 후 `cd` |
@@ -688,11 +703,38 @@ clip하고 회전 반경을 보존하는 리미터를 0.3 m/s, 0.3 rad/s에 겁�
 | [policy/run_autonomy.py](policy/run_autonomy.py) | 제어 루프, 안전장치, `/state`·`/cmd` 서버 |
 | [policy/check_model.py](policy/check_model.py) | 오프라인 체크포인트 점검 |
 | [static/autonomy_control.html](static/autonomy_control.html) | 조작 페이지 (SDK 서버가 서빙) |
-| [environment-sdk.yml](environment-sdk.yml) | `rover-sdk` conda 환경 (Python 3.9 + [requirements.txt](requirements.txt)) |
-| [environment-policy.yml](environment-policy.yml) | `rover-policy` conda 환경 (Python 3.10 + [policy/requirements.txt](policy/requirements.txt)) |
+| [environment.yml](environment.yml) | `rover` conda 환경 하나 (Python 3.11 + [requirements.txt](requirements.txt) + [policy/requirements.txt](policy/requirements.txt)) |
 | `policy/calibration.json` | 측정된 속도 상수. 페이지가 생성, gitignore됨 |
 
-`main.py`, `browser_service.py` 등 SDK 서버 코드는 수정하지 않았습니다.
+`main.py`를 비롯한 SDK 서버 코드는 수정하지 않았습니다. 예외는
+[browser_service.py](browser_service.py) 하나입니다.
+
+### 브라우저 드라이버 (pyppeteer → Playwright)
+
+원래 이 포크는 헤드리스 브라우저를 **pyppeteer**로 몰았습니다. pyppeteer는 유지보수가
+끊긴 패키지입니다 — `urllib3<2`와 `websockets<11`을 강제로 고정하고, Python 3.13용 휠이
+없습니다. 그래서 요즘 환경에서 설치부터 깨집니다.
+
+[공식 레포](https://github.com/frodobots-org/earth-rovers-sdk)는 이미 **Playwright**로
+넘어갔고, 이 포크도 거기에 맞췄습니다. [requirements.txt](requirements.txt)는 이제 공식
+레포와 **완전히 동일**합니다.
+
+바뀐 것:
+
+- `pyppeteer==2.0.0` → `playwright==1.60.0` + `wsproto==1.2.0`
+- **Python 버전 제약이 사라졌습니다.** 서버를 3.9에 묶어두던 게 pyppeteer였습니다. 그래서
+  conda 환경도 서버/모델 **두 개에서 하나(`rover`)로 합쳤습니다.**
+- `CHROME_EXECUTABLE_PATH`가 **선택사항**이 됐습니다. `CHROME_EXECUTABLE_PATH` → 설치된
+  Google Chrome → Playwright 번들 Chromium 순으로 찾습니다. macOS 경로가 기본값으로
+  박혀있던 문제도 같이 사라졌습니다.
+- 브라우저가 죽으면 **자동으로 다시 띄웁니다**(`_run`의 재연결). 단 `/control`과 `/speak`은
+  재시도하지 않습니다 — 정지 명령이 뒤늦게 두 번 나가면 안 되니까요.
+- 첫 프레임을 기다릴 때 `<video>` 엘리먼트가 아니라 **RTM 준비 상태**를 기다립니다. 카메라가
+  꺼져 있어도 조작과 텔레메트리는 살아있어야 하기 때문입니다.
+
+`main.py`가 쓰는 메서드(`data`, `front`, `rear`, `send_message`, `speak`,
+`take_screenshot`)와 페이지 쪽 JS 계약(`window.sendMessage`, `getLastBase64Frame`,
+`window.rtm_data`)은 그대로라, `main.py`와 `static/`은 건드리지 않았습니다.
 
 ### 모델 프로세스 HTTP 인터페이스
 
