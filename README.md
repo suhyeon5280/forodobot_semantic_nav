@@ -232,9 +232,17 @@ ls -lh best.pth        # 415M 근처면 정상. 몇 KB면 다운로드 실패(HT
 cp .env.sample .env
 ```
 
-복사했다면 **`.env.sample`에 들어있는 `MISSION_SLUG` 줄을 반드시 지우세요.** 넣어두면 미션
-모드가 되어 모든 엔드포인트가 `/start-mission`을 먼저 요구합니다. 자유 주행하려면 아예
-빼야 합니다.
+**`MISSION_SLUG`는 자유 주행에 필요 없습니다 — 공식 SDK에서도 선택사항입니다.** 문제는
+"없어도 된다"가 아니라 **"있으면 안 된다"** 는 겁니다. 값이 들어있으면 서버가 미션 모드로
+들어가서, `/start-mission`을 호출하기 전까지 `/`를 포함한 모든 엔드포인트가 400
+`Call /start-mission endpoint to start a mission`을 뱉습니다.
+
+지금 `.env.sample`에는 주석 처리돼 있지만, **예전에 복사해둔 `.env`가 있다면 직접
+확인하세요:**
+
+```bash
+grep -n MISSION_SLUG .env
+```
 
 최종적으로 이 네 줄이면 됩니다:
 
@@ -295,7 +303,31 @@ python -m playwright install chromium           # 브라우저가 아직 없다�
 git fetch origin && git reset --hard origin/main
 ```
 
-`.env`, `best.pth`, `dataset/`은 gitignore라 pull이 건드리지 않습니다. 그대로 남습니다.
+`best.pth`와 `dataset/`은 gitignore라 pull이 건드리지 않습니다. 그대로 남습니다.
+
+### ⚠️ `.env`는 pull로 안 고쳐집니다
+
+레포에 `.env` 파일 자체가 없기 때문에, **`git pull`은 여러분의 `.env`를 만들지도 고치지도
+않습니다.** 아래 두 가지는 노트북에서 직접 해야 합니다.
+
+**1. `MISSION_SLUG` 지우기 (예전에 `cp .env.sample .env` 한 클론이면 100% 해당)**
+
+`.env.sample`에 예제 값이 들어있어서 그대로 복사됐습니다. 이게 들어있으면 **서버의 모든
+엔드포인트가 400을 뱉습니다** — `/`에 들어가도 페이지 대신
+`{"detail":"Call /start-mission endpoint to start a mission"}` JSON만 보입니다.
+
+```bash
+grep -n MISSION_SLUG .env                          # 있는지 확인
+sed -i 's/^MISSION_SLUG=/# MISSION_SLUG=/' .env    # 주석 처리
+```
+
+**고친 뒤 서버를 반드시 재시작하세요.** `.env`는 프로세스가 뜰 때 한 번만 읽습니다.
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/     # 200이면 통과
+```
+
+**2. `CHROME_EXECUTABLE_PATH`는 지워도 됩니다.** 이제 선택사항입니다.
 
 > **pyppeteer 시절에 받아둔 클론이라면** — 서버가 Playwright로 바뀌었으니 환경을 새로 만드는
 > 게 깔끔합니다. 예전 `rover-sdk`/`rover-policy` 환경은 지워도 됩니다.

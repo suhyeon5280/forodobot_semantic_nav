@@ -29,12 +29,42 @@ class RoverClient:
         self.timeout = timeout
         self._session = requests.Session()
 
+    @staticmethod
+    def _raise_for_status(response: requests.Response) -> None:
+        """raise_for_status, but with the server's own explanation attached.
+
+        A bare "400 Client Error" says nothing actionable — the SDK server puts
+        the actual reason in FastAPI's {"detail": ...} body, so surface it.
+        """
+        if response.ok:
+            return
+        detail = None
+        try:
+            detail = response.json().get("detail")
+        except Exception:  # noqa: BLE001 - body may not be JSON
+            detail = (response.text or "").strip()[:200] or None
+
+        hint = ""
+        if detail and "start-mission" in str(detail):
+            hint = (
+                " -> remove MISSION_SLUG from .env and restart the SDK server;"
+                " mission mode blocks every endpoint until /start-mission"
+            )
+        elif detail and "retrieve tokens" in str(detail):
+            hint = " -> check SDK_API_TOKEN and BOT_SLUG in .env"
+
+        raise requests.HTTPError(
+            f"{response.status_code} from {response.request.method} "
+            f"{response.url}: {detail or '(no detail)'}{hint}",
+            response=response,
+        )
+
     def front_frame(self) -> Optional[Frame]:
         """Latest front camera frame, or None if the stream is not up yet."""
         response = self._session.get(f"{self.base_url}/v2/front", timeout=self.timeout)
         if response.status_code == 404:
             return None
-        response.raise_for_status()
+        self._raise_for_status(response)
         payload = response.json()
         encoded = payload["front_frame"]
         image = Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGB")
@@ -43,7 +73,7 @@ class RoverClient:
     def data(self) -> dict:
         """Telemetry as broadcast by the rover over RTM (battery, GPS, IMU...)."""
         response = self._session.get(f"{self.base_url}/data", timeout=self.timeout)
-        response.raise_for_status()
+        self._raise_for_status(response)
         return response.json() or {}
 
     def control(self, linear: float, angular: float) -> None:
@@ -53,7 +83,7 @@ class RoverClient:
             json={"command": {"linear": linear, "angular": angular}},
             timeout=self.timeout,
         )
-        response.raise_for_status()
+        self._raise_for_status(response)
 
     def stop(self) -> None:
         """Best-effort halt. Never raises — it runs on the way out of the loop."""
@@ -68,7 +98,7 @@ class RoverClient:
         response = self._session.post(
             f"{self.base_url}/dataset/start", timeout=self.timeout
         )
-        response.raise_for_status()
+        self._raise_for_status(response)
         return response.json()
 
     def dataset_log_frame(
@@ -89,7 +119,7 @@ class RoverClient:
         response = self._session.post(
             f"{self.base_url}/dataset/stop", timeout=self.timeout
         )
-        response.raise_for_status()
+        self._raise_for_status(response)
         return response.json()
 
     def wait_until_ready(self, attempts: int = 30, delay: float = 2.0) -> bool:
