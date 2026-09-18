@@ -288,6 +288,20 @@ scp -r ~/forodobot_semantic_nav/models/. <노트북>:~/forodobot_semantic_nav/mo
 해시 대조가 귀찮으면 건너뛰고 [오프라인 점검](#4-오프라인-점검)만 돌리세요. 파일이
 깨졌으면 거기서 걸립니다.
 
+> **USB에서 `Filesystem does not support symbolic links` 가 뜨면** — `hf/` 안에
+> 심볼릭 링크가 남아 있는 것입니다. Hugging Face 캐시는 같은 파일을 중복 저장하지
+> 않으려고 `blobs/`에 실제 파일을 두고 `snapshots/`에서 링크로 가리킵니다. USB가
+> FAT32/exFAT이면 링크를 저장할 수 없어 복사가 거기서 멈춥니다.
+> 이 레포의 `models/hf`는 링크를 이미 풀어두었지만, 캐시를 새로 만들면 다시 생깁니다.
+> 그럴 때는 이렇게 푸세요.
+>
+> ```bash
+> cd ~/forodobot_semantic_nav/models
+> cp -rL hf hf_flat && rm -rf hf_flat/hub/*/blobs   # -L 이 링크를 실제 파일로 풉니다
+> rm -rf hf && mv hf_flat hf
+> find models -type l | wc -l                       # 0 이어야 합니다
+> ```
+
 **인터넷이 연결되는 노트북이면** `clip/`과 `hf/`는 빼도 됩니다. 첫 실행에 알아서
 받습니다. 그러면 옮길 양이 1.8 GB에서 **906 MB로 줄어듭니다.** 다만 그 두 폴더를
 가져가면 첫 실행이 빠르고 현장에서 네트워크가 끊겨도 돕니다. 용량이 문제가 아니면
