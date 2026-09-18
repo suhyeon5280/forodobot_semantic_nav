@@ -255,43 +255,64 @@ ls models/
 # README.md    ← 이것만 보이면 정상. 비어 있는 게 맞습니다.
 ```
 
-#### 넣어야 하는 파일
+#### 이미 `models/`가 있는 컴퓨터에서 옮기는 경우
 
-**파일 이름을 아래와 정확히 같게** 두세요. 코드가 이 이름으로 찾습니다.
+**보통 이 경우입니다.** 골라 담을 필요 없이 **`models/` 안의 내용을 전부 복사**해서
+새 컴퓨터의 `models/` 안에 그대로 넣으세요. USB로 옮기든 `scp`로 보내든 같습니다.
+전부 1.8 GB입니다.
 
-| 파일 | 크기 | 역할 | 필수 |
+폴더 이름과 파일 이름은 **바꾸지 마세요.** 코드가 그 이름으로 찾습니다.
+
+```bash
+# 보내는 쪽 — 뽑기 전에 sync 를 꼭 하세요. 파일 관리자가 끝났다고 해도
+# 버퍼에 남아 있을 수 있고, 415 MB 짜리가 잘리면 로드에서 죽습니다.
+cd ~/forodobot_semantic_nav/models
+sha256sum *.pth *.pt > SHA256SUMS          # 받는 쪽에서 대조할 목록
+cp -r . /media/$USER/<USB이름>/models/
+sync
+```
+
+```bash
+# 받는 쪽
+cd ~/forodobot_semantic_nav
+cp -r /media/$USER/<USB이름>/models/. models/
+cd models && sha256sum -c SHA256SUMS       # OK 가 다섯 줄 나와야 정상
+```
+
+`scp`로 바로 보낼 수도 있습니다.
+
+```bash
+scp -r ~/forodobot_semantic_nav/models/. <노트북>:~/forodobot_semantic_nav/models/
+```
+
+해시 대조가 귀찮으면 건너뛰고 [오프라인 점검](#4-오프라인-점검)만 돌리세요. 파일이
+깨졌으면 거기서 걸립니다.
+
+**인터넷이 연결되는 노트북이면** `clip/`과 `hf/`는 빼도 됩니다. 첫 실행에 알아서
+받습니다. 그러면 옮길 양이 1.8 GB에서 **906 MB로 줄어듭니다.** 다만 그 두 폴더를
+가져가면 첫 실행이 빠르고 현장에서 네트워크가 끊겨도 돕니다. 용량이 문제가 아니면
+**그냥 전부 복사하는 쪽이 낫습니다.**
+
+#### 폴더에 뭐가 들어있는 건지
+
+| 파일 | 크기 | 역할 | |
 |---|---|---|---|
 | `arm4p_s0_latest.pth` | 415M | 정책 (arm-4′) | 필수 |
 | `act4_cl6159_s2.pt` | 55M | CLIP 어댑터 | 필수 |
 | `full_H1_linear_lr0.001_s0.pt` | 1.1M | 국소화 헤드 | 필수 |
 | `yolov8n.pt` | 6.3M | 검출기 | 필수 |
 | `omni_deps/` | 12M | ultralytics, open_clip | 필수 |
-| `arm1_latest.pth` | 418M | 대조군 정책 (`--arm1`) | 선택 |
-| `frames/` | 0.5M | 점검용 프레임 | 선택 |
-| `clip/` | 338M | CLIP ViT-B/32 캐시 | 오프라인용 |
-| `hf/` | 571M | CLIP ViT-B/16 캐시 | 오프라인용 |
+| `arm1_latest.pth` | 418M | 대조군 정책 (`--arm1`) | 현장 A/B에 필요 |
+| `frames/` | 0.5M | 점검용 프레임 | 점검에 필요 |
+| `clip/` | 338M | CLIP ViT-B/32 캐시 | 인터넷 있으면 생략 가능 |
+| `hf/` | 571M | CLIP ViT-B/16 캐시 | 인터넷 있으면 생략 가능 |
 
-넣고 나면 이렇게 보입니다.
+#### `models/`를 처음 만드는 경우
 
-```
-models/
-├── README.md
-├── arm4p_s0_latest.pth
-├── act4_cl6159_s2.pt
-├── full_H1_linear_lr0.001_s0.pt
-├── yolov8n.pt
-├── arm1_latest.pth
-├── omni_deps/
-│   ├── ultralytics/
-│   └── open_clip/
-├── frames/episode_0020/image/*.jpg
-├── clip/ViT-B-32.pt
-└── hf/hub/models--timm--vit_base_patch16_clip_224.openai/
-```
+어느 컴퓨터에도 `models/`가 없다면 학습 저장소에서 모아야 합니다. **한 번만** 하면
+되고, 그 뒤로는 위처럼 폴더째 복사하면 됩니다.
 
-#### 학습한 컴퓨터에서 가져오는 경우
-
-원본 경로는 이렇습니다. 학습 저장소에서 이름을 바꿔 복사하세요.
+원본 경로는 이렇습니다. 이름을 바꿔 복사하세요.
 
 ```bash
 E=~/suhyeon/edge_vlm
@@ -311,11 +332,18 @@ mkdir -p models/frames/episode_0020/image
 (cd $O/omnivla_dataset_hf/episode_0020/image && ls *.jpg | sort | head -16 \
    | xargs -I{} cp {} ~/forodobot_semantic_nav/models/frames/episode_0020/image/)
 
-# 선택: 현장에 인터넷이 없을 때
+# 권장: CLIP 캐시. 있으면 첫 실행이 빠르고 네트워크 없이도 돕니다
 mkdir -p models/clip models/hf/hub
 cp ~/.cache/clip/ViT-B-32.pt                                models/clip/
 cp -r ~/.cache/huggingface/hub/models--timm--vit_base_patch16_clip_224.openai \
       models/hf/hub/
+```
+
+다 모았으면 해시 목록을 만들어 두세요. 다음부터 다른 컴퓨터로 옮길 때 이 파일로
+대조합니다.
+
+```bash
+(cd models && sha256sum *.pth *.pt > SHA256SUMS)
 ```
 
 #### 제대로 들어갔는지 확인
