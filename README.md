@@ -16,6 +16,7 @@ Earth Rover가 스스로 주행합니다. **웹페이지에 목적지를 글로 
 - [최초 1회 설정](#최초-1회-설정)
 - [업데이트 받기](#업데이트-받기)
 - [실행](#실행)
+- [정책 세 가지](#정책-세-가지)
 - [웹페이지 사용법](#웹페이지-사용법)
 - [첫 주행](#첫-주행)
 - [⚠️ 주의사항](#️-주의사항)
@@ -438,6 +439,10 @@ python -m policy.run_autonomy --ckpt best.pth
 
 **첫 주행이라면 여기서 `--dry-run`을 붙이세요** → [첫 주행](#첫-주행)
 
+위 명령은 레포에 원래 있던 OmniVLA-edge(`--upstream` 경로)를 돌립니다. 기본값은
+파인토닝한 **arm-4′**이며, 환경이 `rover`가 아니라 frodo_lan 입니다.
+자세한 것은 [정책 세 가지](#정책-세-가지)에 있습니다.
+
 ### activate 없이 한 줄로 (선택)
 
 `conda run`을 쓰되 **`--no-capture-output`을 꼭 붙이세요.** 없으면 출력이 버퍼링돼서
@@ -494,6 +499,89 @@ python -m policy.run_autonomy --ckpt best.pth
 
 # 브라우저: http://localhost:8000/static/autonomy_control.html
 ```
+
+---
+
+## 정책 세 가지
+
+같은 제어 루프 위에서 정책 세 개를 고를 수 있습니다. 루프, 웨이포인트 변환, 안전
+장치는 전부 공통이고 **정책만** 바뀝니다.
+
+| 플래그 | 정책 | 체크포인트 | 환경 |
+|---|---|---|---|
+| (없음) | **arm-4′** — heatmap 4채널 판 | `edge_vlm/results/phase4/omnivla/arm4p_s0/latest.pth` | frodo_lan + `.omni_deps` |
+| `--arm1` | **arm-1** — 파인튜닝 전 원본. 현장 A/B 대조군 | `OmniVLA_edge/train/logs_frodo_lan_ft_full_lang/.../latest.pth` | frodo_lan + `.omni_deps` |
+| `--upstream` | 레포에 원래 있던 OmniVLA-edge | `best.pth` | `rover` |
+
+```bash
+# arm-4′ (기본)
+PYTHONPATH=~/suhyeon/edge_vlm/.omni_deps \
+  ~/anaconda3/envs/frodo_lan/bin/python -m policy.run_autonomy
+
+# arm-1 대조군 — 같은 루프, 같은 프레임
+PYTHONPATH=~/suhyeon/edge_vlm/.omni_deps \
+  ~/anaconda3/envs/frodo_lan/bin/python -m policy.run_autonomy --arm1
+
+# 원래 경로
+conda activate rover && python -m policy.run_autonomy --upstream --ckpt best.pth
+```
+
+arm-4′와 arm-1은 `edge_vlm`·`OmniVLA_edge` 저장소를 **읽기 전용으로 import**합니다.
+두 저장소를 고치지 않으며, 경로는 `EDGE_VLM_ROOT`·`OMNIVLA_TRAIN_ROOT` 환경변수로
+바꿀 수 있습니다. `ultralytics`와 `open_clip`은 `edge_vlm/.omni_deps`에 있고
+[policy/ours_policy.py](policy/ours_policy.py)가 `sys.path`에 직접 넣으므로
+`PYTHONPATH`는 없어도 됩니다.
+
+### arm-4′가 매 tick 하는 일
+
+정책 forward와 웨이포인트→제어는 **원본 그대로**입니다. 달라지는 것은 정책을 부르기
+직전의 입력 준비뿐입니다.
+
+1. 프롬프트를 `"A next to|beside|near B"`로 파싱합니다. 관계어가 없으면 A가 문장
+   전체, B는 없습니다.
+2. YOLOv8n(conf 0.25)으로 현재 프레임의 후보 박스를 뽑고, A의 머리명사가 COCO
+   클래스로 매핑되면 그 클래스만 남깁니다. 매핑이 안 되거나 해당 클래스가 0개면 전
+   박스를 씁니다.
+3. CLIP ViT-B/16 + 어댑터로 A 문구에 대한 후보별 점수를 냅니다.
+4. 같은 CLIP + 국소화 헤드로 B 문구의 heatmap 피크를 찾습니다. B가 없으면 건너뜁니다.
+5. `argmax_k [점수_k − 0.25 · 피크까지의 거리]`로 하나를 고릅니다. B가 없으면 점수만
+   봅니다.
+6. 선택한 박스 안만 남긴 heatmap을 224×224 1채널로 만듭니다.
+7. **`current_img`의 RGB 3채널을 0으로 채우고** heatmap을 4번째 채널로 붙입니다.
+   정규화 공간의 0은 데이터셋 평균입니다. 이 마스킹이 빠지면 정책이 heatmap을 무시합니다.
+   히스토리 6프레임(`obs_img`)은 건드리지 않고, 텍스트 인코더도 원본 CLIP ViT-B/32
+   그대로입니다.
+
+후보가 0개면 A heatmap 피크에 고정 크기 박스 하나를 놓고 계속 진행합니다. 참조
+구현은 이 경우 arm-1로 넘어가지만, 현장 시험 중에 모델이 조용히 바뀌지 않도록
+배포 쪽은 그렇게 하지 않습니다. 박스 크기(한 변 0.25)는 참조에 없던 값이라 여기서
+정한 것입니다.
+
+### 로봇에 붙이기 전 점검
+
+```bash
+PYTHONPATH=~/suhyeon/edge_vlm/.omni_deps \
+  ~/anaconda3/envs/frodo_lan/bin/python -m policy.check_ours --with-arm1
+```
+
+세 가지를 봅니다. ① `--upstream` 경로가 그대로 도는지, ② 지정 프레임에서 어순을
+바꾼 두 문장의 끝점 횡위치가 오프라인 참조와 ±0.01 m 안에서 맞는지, ③ tick 시간이
+333 ms 예산 안인지. 실측값은 [지연](#지연)에 있습니다.
+
+`--tick-log <디렉토리>`를 주면 tick마다 프롬프트·파싱·후보·점수·선택·웨이포인트·
+단계별 시간이 `ticks.jsonl`로, 정책 입력 heatmap이 `thumbs/*.png`로 쌓입니다.
+
+### 눈금이 두 개입니다
+
+참조 쪽 지표와 배포 쪽 주행은 **다른 눈금**을 씁니다. 같은 `(8,4)` 출력을 놓고도
+숫자가 달라지므로 결과를 나란히 놓을 때 반드시 병기하세요.
+
+| | 참조 지표 | 배포 주행 |
+|---|---|---|
+| 웨이포인트 간격 | 0.125 m | `control.py`의 `METRIC_WAYPOINT_SPACING = 0.1` |
+| 보는 지점 | 끝점(index 7) | `WAYPOINT_INDEX = 4` |
+
+[policy/check_ours.py](policy/check_ours.py)는 두 눈금을 모두 출력합니다.
 
 ---
 
@@ -577,6 +665,24 @@ mock 서버와 실제 브라우저로는 전 구간을 확인했지만, **진짜
 카메라 프레임이 Agora를 통해 원격에서 오기 때문에 모델이 보는 화면은 이미 수백 ms
 과거입니다. 원저자의 셋업(로봇에 직접 붙은 카메라)보다 불리한 조건입니다. 페이지가 추론
 시간과 루프 시간은 보여주지만 **영상 자체의 지연은 측정하지 않습니다.**
+
+arm-4′의 단계별 시간입니다. RTX 4070 SUPER · 34 tick · 예열 2 tick 제외 ·
+`policy.check_ours`로 실측했습니다. **로봇이 빠진 수치**입니다 — 프레임 수신, 구동
+명령 전송, 네트워크가 여기 없습니다. 측정 당시 같은 GPU에서 학습(`train_arm.py`)이
+돌고 있었으므로 **경쟁 상태의 값**입니다. 비어 있는 GPU에서는 더 빠릅니다.
+
+| 단계 | 중앙값 | p90 |
+|---|---|---|
+| 입력 준비 | 39 ms | 58 ms |
+| 검출 (YOLOv8n) | 19 ms | 24 ms |
+| CLIP heatmap | 14 ms | 28 ms |
+| 선택 규칙 | 0.1 ms | 0.1 ms |
+| 정책 forward | 29 ms | 30 ms |
+| **tick 전체** | **102 ms** | **137 ms** |
+
+333 ms 예산의 3분의 1이 안 되고, 34 tick 중 초과는 0건입니다. 첫 tick만 CUDA 커널
+선택 때문에 483 ms가 걸립니다. 루프는 정지 상태로 시작하고 멈춰 있는 동안에는 정책을
+호출하지 않으므로, 그 한 tick은 로봇이 서 있는 동안 지나갑니다.
 
 ### GPS
 
@@ -685,13 +791,22 @@ CLIP의 77토큰을 넘으면 조용히 잘립니다.
 
 ## 실행 옵션 전체
 
-보통은 `--ckpt`만 있으면 됩니다.
+보통은 아무것도 안 줘도 됩니다.
+
+**정책** — [정책 세 가지](#정책-세-가지) 참고. `--arm1`과 `--upstream`은 같이 못 씁니다.
+
+| 옵션 | 기본값 | 설명 |
+|---|---|---|
+| (없음) | arm-4′ | 파인튜닝한 heatmap 4채널 정책 |
+| `--arm1` | 꺼짐 | 파인튜닝 전 원본. 현장 A/B 대조군 |
+| `--upstream` | 꺼짐 | 레포에 원래 있던 OmniVLA-edge |
+| `--tick-log` | 참조 저장소의 `d154_field_log` | tick 로그와 heatmap 썸네일 |
 
 **기본**
 
 | 옵션 | 기본값 | 설명 |
 |---|---|---|
-| `--ckpt` | `best.pth` | 체크포인트 경로 |
+| `--ckpt` | 정책별 기본 체크포인트 | 체크포인트 경로 |
 | `--server` | `http://localhost:8000` | SDK 서버 주소 |
 | `--device` | `cuda:0` | CUDA 장치여야 함 |
 | `--ui-port` | `8010` | `/state`, `/cmd` 포트 |
@@ -777,7 +892,9 @@ clip하고 회전 반경을 보존하는 리미터를 0.3 m/s, 0.3 rad/s에 겁�
 | [policy/control.py](policy/control.py) | waypoint → (v, ω) → 정규화 명령, 캘리브레이션 저장 |
 | [policy/rover_client.py](policy/rover_client.py) | SDK 서버용 HTTP 클라이언트 |
 | [policy/run_autonomy.py](policy/run_autonomy.py) | 제어 루프, 안전장치, `/state`·`/cmd` 서버 |
-| [policy/check_model.py](policy/check_model.py) | 오프라인 체크포인트 점검 |
+| [policy/check_model.py](policy/check_model.py) | 오프라인 체크포인트 점검 (`--upstream` 경로) |
+| [policy/ours_policy.py](policy/ours_policy.py) | arm-4′·arm-1 정책. 파싱 → 검출 → CLIP → heatmap 채널 |
+| [policy/check_ours.py](policy/check_ours.py) | arm-4′ 로봇 연결 전 점검 3종 |
 | [static/autonomy_control.html](static/autonomy_control.html) | 조작 페이지 (SDK 서버가 서빙) |
 | [environment.yml](environment.yml) | `rover` conda 환경 하나 (Python 3.11 + [requirements.txt](requirements.txt) + [policy/requirements.txt](policy/requirements.txt)) |
 | `policy/calibration.json` | 측정된 속도 상수. 페이지가 생성, gitignore됨 |

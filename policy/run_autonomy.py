@@ -3,8 +3,23 @@ Drive the rover with OmniVLA-edge.
 
 Runs as its own process against an already-running SDK server:
 
-    conda activate rover && hypercorn main:app             # terminal 1, owns the rover
-    conda activate rover && python -m policy.run_autonomy --ckpt best.pth  # terminal 2
+    conda activate rover && hypercorn main:app      # terminal 1, owns the rover
+    <frodo_lan python> -m policy.run_autonomy       # terminal 2, drives it
+
+Three policies share this loop. The default is arm-4', the fine-tuned policy
+that is steered by a grounded heatmap channel; --arm1 runs the policy it was
+fine-tuned from, on the same loop and the same frames, which is the A/B control
+for a field test; --upstream runs the original OmniVLA-edge policy this
+repository shipped with.
+
+The first two import the edge_vlm and OmniVLA_edge repositories read-only and
+need the frodo_lan environment plus edge_vlm/.omni_deps. Only --upstream runs in
+the rover environment, where it worked before:
+
+    conda activate rover && python -m policy.run_autonomy --upstream --ckpt best.pth
+
+Check a machine before trusting it with the rover: `python -m policy.check_ours`
+reproduces the offline reference's numbers and times the tick.
 
 Then open http://localhost:8000/static/autonomy_control.html, type where the
 rover should go, and press Start. The instruction is normally typed there rather
@@ -72,7 +87,8 @@ class AutonomyLoop:
 
     def __init__(
         self,
-        policy: OmniVLAEdgePolicy,
+        # OmniVLAEdgePolicy or OursPolicy: the loop only calls predict_waypoints
+        policy,
         client: RoverClient,
         *,
         prompt: Optional[str],
@@ -556,10 +572,32 @@ def _pair(value: str) -> tuple:
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--ckpt", default=DEFAULT_CHECKPOINT, help="OmniVLA-edge checkpoint"
+        "--ckpt",
+        default=None,
+        help="policy checkpoint; defaults to the one the chosen policy expects",
     )
     parser.add_argument("--server", default="http://localhost:8000")
     parser.add_argument("--device", default="cuda:0")
+
+    which = parser.add_argument_group(
+        "policy (default: arm-4', the fine-tuned heatmap-channel policy)"
+    )
+    exclusive = which.add_mutually_exclusive_group()
+    exclusive.add_argument(
+        "--arm1",
+        action="store_true",
+        help="the unmodified arm-1 policy on the same loop: the A/B control",
+    )
+    exclusive.add_argument(
+        "--upstream",
+        action="store_true",
+        help="the original OmniVLA-edge policy shipped with this repository",
+    )
+    which.add_argument(
+        "--tick-log",
+        default=None,
+        help="directory for ticks.jsonl and heatmap thumbnails (arm-4'/arm-1)",
+    )
 
     goal = parser.add_argument_group(
         "goal (all optional — the instruction is normally typed in the UI)"
@@ -631,8 +669,8 @@ def main(argv=None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    if not os.path.exists(args.ckpt):
-        logger.error("%s", checkpoint_missing_message(args.ckpt))
+    if args.upstream and not os.path.exists(args.ckpt or DEFAULT_CHECKPOINT):
+        logger.error("%s", checkpoint_missing_message(args.ckpt or DEFAULT_CHECKPOINT))
         return 1
 
     goal_image = (
@@ -654,8 +692,33 @@ def main(argv=None) -> int:
             "drive with; measure them from the page if the steering looks off."
         )
 
-    logger.info("loading %s on %s", args.ckpt, args.device)
-    policy = OmniVLAEdgePolicy(args.ckpt, device=args.device)
+    if args.upstream:
+        ckpt = args.ckpt or DEFAULT_CHECKPOINT
+        logger.info("loading upstream OmniVLA-edge from %s on %s", ckpt, args.device)
+        policy = OmniVLAEdgePolicy(ckpt, device=args.device)
+    else:
+        # Imported here, not at module scope: the upstream path must keep
+        # working on a machine that has neither edge_vlm nor the extra deps.
+        from .ours_policy import DEFAULT_TICK_LOG, OursPolicy
+
+        logger.info(
+            "loading %s on %s", "arm-1 (control)" if args.arm1 else "arm-4'",
+            args.device,
+        )
+        policy = OursPolicy(
+            args.ckpt,
+            device=args.device,
+            arm1_only=args.arm1,
+            tick_log=args.tick_log or DEFAULT_TICK_LOG,
+        )
+        if policy.CONTEXT_LEN != CONTEXT_LEN:
+            logger.error(
+                "context length mismatch: the loop buffers %d frames but the "
+                "policy wants %d",
+                CONTEXT_LEN,
+                policy.CONTEXT_LEN,
+            )
+            return 1
 
     client = RoverClient(args.server)
     logger.info("waiting for the rover video stream via %s", args.server)
