@@ -1,0 +1,22 @@
+# D116 — 통합 1차. 규칙 3. **OmniVLA_edge 는 읽기 전용**
+arm1_ckpt: "/home/shy/suhyeon/OmniVLA_edge/train/logs_frodo_lan_ft_full_lang/2026_08_28_11_17_04/latest.pth"
+base_ckpt: "/home/shy/suhyeon/OmniVLA_edge/train/omnivla-edge.pth"
+omni_config: "/home/shy/suhyeon/OmniVLA_edge/train/config/frodo_lan_ft_full_lang.yaml"
+
+expect_unexpected_keys: 12     # lgx 죽은 텐서. 다르면 전제가 달라진 것이므로 정지 (D116 §2)
+image_size: 96                 # image_size[0] — obs/map/goal 이미지
+current_img_size: 224          # image_size_clip[0] — FiLM 입력(현재 프레임). 4096 = 1024x2x2 로 확인됨
+text_dim: 512                  # CLIP ViT-B/32
+wiring_batch: 2
+seed: 0
+
+model:                         # frodo_lan_ft_full_lang.yaml 에서 옮긴 값 (규칙 3: 여기에만)
+  context_size: 5
+  len_traj_pred: 8
+  learn_angle: true
+  obs_encoder: "efficientnet-b0"
+  obs_encoding_size: 1024
+  late_fusion: false
+  mha_num_attention_heads: 4
+  mha_num_attention_layers: 4
+  mha_ff_dim_factor: 4

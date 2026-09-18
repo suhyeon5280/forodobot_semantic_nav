@@ -19,6 +19,20 @@ requests
 efficientnet_pytorch
 utm
 
+# ---------------------------------------------------------------------------
+# arm-4' (policy/ours_policy.py). ultralytics and open_clip are NOT listed
+# here: they are carried in models/omni_deps, installed with --no-deps so that
+# they cannot pull their own torch over this one. Their dependencies are not
+# carried with them, so the ones actually loaded at runtime are listed here.
+# The list is traced from a real inference run, not copied from their metadata,
+# which asks for a good deal more than the inference path touches.
+# ---------------------------------------------------------------------------
+PyYAML                 # reads the vendored config in policy/refs/
+lmdb                   # imported by the vendored LeLaN dataset module
+matplotlib             # ultralytics imports it at module scope
+safetensors            # open_clip reads the backbone weights with it
+huggingface-hub        # open_clip fetches the backbone through it
+
 # CLIP ViT-B/32 is the text encoder OmniVLA-edge was trained against.
 # Not on PyPI under this name; install from source.
 ftfy

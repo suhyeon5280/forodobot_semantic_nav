@@ -1,22 +1,23 @@
 """Pre-flight checks for the arm-4' deployment path. Run before the rover.
 
-    PYTHONPATH=/home/shy/suhyeon/edge_vlm/.omni_deps \
-      /home/shy/anaconda3/envs/frodo_lan/bin/python -m policy.check_ours
+    conda activate rover
+    python -m policy.check_ours
 
 Three checks, all offline and inference-only:
 
   1. regression -- the upstream OmniVLA-edge path still loads and predicts.
+                   Skipped, not failed, when best.pth is not present.
   2. port       -- the two word-order-swapped prompts on the reference frame
                    reproduce the offline reference's endpoint within a tolerance.
+                   This is the one that catches a preprocessing mistake.
   3. timing     -- median tick time against the 333 ms control period.
 
-Nothing here drives the rover and nothing writes to the read-only repositories.
+Nothing here drives the rover, and nothing is written outside this repository.
 """
 
 import argparse
 import json
 import os
-import statistics
 import sys
 import time
 
@@ -30,7 +31,7 @@ from .control import (
     to_control_command,
     waypoint_to_velocity,
 )
-from .ours_policy import EDGE_VLM_ROOT, OursPolicy
+from .ours_policy import MODELS_DIR, REFS_ROOT, OursPolicy
 
 # The offline reference reports endpoint lateral position at this scale, which
 # is not the scale the rover is driven at. Both are printed; see the mismatch
@@ -38,9 +39,15 @@ from .ours_policy import EDGE_VLM_ROOT, OursPolicy
 REF_WAYPOINT_SPACING = 0.125
 REF_WAYPOINT_INDEX = 7
 
-DATASET_ROOT = "/home/shy/suhyeon/OmniVLA_edge/omnivla_dataset_hf"
+# The validation frames come from the training dataset, which is far too large
+# to carry. `models/frames/` holds the handful this needs; the environment
+# variable points at the full dataset on a machine that has it.
+DATASET_ROOT = os.environ.get(
+    "OMNIVLA_DATASET_ROOT", os.path.join(MODELS_DIR, "frames")
+)
+# The recorded reference output is small and committed with the rest of refs/.
 REF_RESULT = os.path.join(
-    EDGE_VLM_ROOT, "results/phase4/omnivla/d153_e2e_mask.json"
+    REFS_ROOT, "results/phase4/omnivla/d153_e2e_mask.json"
 )
 REF_FRAME = "episode_0020/00000000"
 REF_PROMPTS = (
@@ -93,7 +100,11 @@ def check_regression(device):
 
     print("\n=== 1. regression: upstream OmniVLA-edge path ===")
     if not os.path.exists(DEFAULT_CHECKPOINT):
-        print(f"  SKIP: {DEFAULT_CHECKPOINT} not present")
+        print(
+            f"  SKIP: {DEFAULT_CHECKPOINT} is not here. It is only needed for "
+            "--upstream, and it is a release asset rather than part of the "
+            "repository, so this is the normal state of a fresh clone."
+        )
         return None
     policy = OmniVLAEdgePolicy(DEFAULT_CHECKPOINT, device=device)
     frames = load_context(REF_FRAME, CONTEXT_LEN)
@@ -113,7 +124,7 @@ def check_regression(device):
     print(f"  v={v:.3f} m/s  w={w:.3f} rad/s  linear={linear:+.3f} angular={angular:+.3f}")
     print("  PASS: upstream path loads and predicts")
     del policy
-    return waypoints
+    return True
 
 
 def check_port(device, tick_log=None):
@@ -135,9 +146,6 @@ def check_port(device, tick_log=None):
         delta = abs(ours - ref) if ref is not None else float("nan")
         passed = ref is not None and delta <= TOLERANCE_M
         ok = ok and passed
-        # Same tensors, packed the way the deployment reference packed them, to
-        # show what that one preprocessing choice is worth.
-        obs = policy._pack(frames, via_224=False)
         print(f"\n  \"{prompt}\"")
         print(f"    A={record['A']!r}  B={record['B']!r}  head={record.get('A_head')!r}")
         print(
@@ -162,7 +170,6 @@ def check_port(device, tick_log=None):
             f"    deployment scale (index {WAYPOINT_INDEX}, {METRIC_WAYPOINT_SPACING} m):"
             f" v={v:.3f} m/s w={w:+.3f} rad/s -> linear={linear:+.3f} angular={angular:+.3f}"
         )
-        del obs
     print(f"\n  {'PASS' if ok else 'FAIL'}: port reproduces the reference")
     return ok
 
@@ -288,7 +295,7 @@ def main(argv=None):
 
     results = {}
     if not args.skip_regression:
-        results["regression"] = check_regression(args.device) is not None
+        results["regression"] = check_regression(args.device)
     if not args.skip_port:
         results["port"] = check_port(args.device, args.tick_log)
     if args.with_arm1:
@@ -301,9 +308,14 @@ def main(argv=None):
 
     print("\n=== summary ===")
     for name, passed in results.items():
-        print(f"  {name:11s} {'PASS' if passed else 'FAIL/WARN'}")
-    # Timing is reported, not gating: it is a desktop measurement.
-    gating = [v for k, v in results.items() if k != "timing"]
+        # None means the check could not run, which is not a failure.
+        label = "SKIP" if passed is None else ("PASS" if passed else "FAIL")
+        print(f"  {name:11s} {label}")
+    # Timing is reported, not gating: it is one machine's measurement. A skipped
+    # check does not gate either -- only something that ran and failed.
+    gating = [
+        v for k, v in results.items() if k != "timing" and v is not None
+    ]
     return 0 if all(gating) else 1
 
 

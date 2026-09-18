@@ -55,28 +55,38 @@ Earth Rover가 스스로 주행합니다. **웹페이지에 목적지를 글로 
 
 ```bash
 # ── 최초 1회 ────────────────────────────────────────────────────────────
-cd ~/frodobot_server-omnivla-edge-autonomy       # 자기 경로로
+git clone https://github.com/suhyeon5280/forodobot_semantic_nav.git
+cd forodobot_semantic_nav
+
 conda env create -f environment.yml              # rover (Python 3.11)
 conda activate rover
 python -m playwright install chromium            # 빼먹으면 브라우저가 안 뜹니다
 cp .env.sample .env && vi .env                   # SDK_API_TOKEN, BOT_SLUG 채우기
-curl -L -o best.pth https://github.com/.../best.pth
-python -m policy.check_model --ckpt best.pth     # 오프라인 점검
+
+# 가중치는 깃에 없습니다. models/ 가 빈 폴더로 들어있으니 거기에 복사하세요.
+ls models/                                       # README.md 하나만 보이면 정상
+#   → 넣을 파일 목록: 아래 "모델 넣기"
+
+python -m policy.check_ours                      # 로봇 없이 점검. 여기서 PASS 나와야 함
 
 # ── 매번 ────────────────────────────────────────────────────────────────
 # 터미널 1 — SDK 서버 (다른 기기에서 페이지를 열려면 --bind 0.0.0.0:8000)
-cd ~/frodobot_server-omnivla-edge-autonomy && conda activate rover
+cd ~/forodobot_semantic_nav && conda activate rover
 hypercorn main:app
 
 # 터미널 2 — 모델 (새 터미널, 같은 환경)
-cd ~/frodobot_server-omnivla-edge-autonomy && conda activate rover
-python -m policy.run_autonomy --ckpt best.pth --dry-run   # 첫 주행은 반드시 --dry-run
+cd ~/forodobot_semantic_nav && conda activate rover
+python -m policy.run_autonomy --dry-run          # 첫 주행은 반드시 --dry-run
 
 # 브라우저: http://localhost:8000/static/autonomy_control.html
 ```
 
-자세히: [최초 1회 설정](#최초-1회-설정) · [실행](#실행) · [첫 주행](#첫-주행) ·
-[문제 해결](#문제-해결)
+자세히: [최초 1회 설정](#최초-1회-설정) · [모델 넣기](#2-모델-넣기) · [실행](#실행) ·
+[첫 주행](#첫-주행) · [문제 해결](#문제-해결)
+
+`run_autonomy`는 기본으로 파인튜닝한 **arm-4′** 정책을 돌립니다. 레포에 원래 있던
+OmniVLA-edge로 돌리려면 `--upstream --ckpt best.pth`를 붙이세요 →
+[정책 세 가지](#정책-세-가지)
 
 ---
 
@@ -95,7 +105,7 @@ python -m policy.run_autonomy --ckpt best.pth --dry-run   # 첫 주행은 반드
         │                      │                  │
         │            ┌──────────────────────────────────────┐
         └───────────▶│  모델 프로세스               :8010    │
-        /state,/cmd  │    best.pth ─ OmniVLA-edge 추론       │
+        /state,/cmd  │    models/ ─ arm-4′ 추론              │
                      └──────────────────────────────────────┘
 ```
 
@@ -124,7 +134,10 @@ python -m policy.run_autonomy --ckpt best.pth --dry-run   # 첫 주행은 반드
   - 브라우저는 `playwright install chromium`이 알아서 받습니다. Google Chrome이 설치돼
     있으면 그쪽을 먼저 씁니다 — Chrome은 H.264 코덱이 있어서 일부 로봇 스트림이 검게
     나오는 걸 막아줍니다.
-- **`best.pth`** — 레포에 없습니다. [릴리스에서 받으세요](#2-체크포인트-받기).
+- **모델 가중치** — 레포에 없습니다. 깃에 올릴 수 없는 크기라 `models/` 폴더가 **비어
+  있는 채로** 들어있고, 거기에 직접 복사해야 합니다. 필수 4개에 약 480 MB,
+  대조군과 오프라인 캐시까지 포함하면 약 1.8 GB입니다 → [모델 넣기](#2-모델-넣기)
+- **디스크 여유 5 GB 정도** — conda 환경(torch 포함)에 3 GB 남짓, `models/`에 1.8 GB
 
 브라우저는 서버에 접속만 되면 어느 컴퓨터에서 열어도 됩니다.
 
@@ -141,16 +154,24 @@ python -m policy.run_autonomy --ckpt best.pth --dry-run   # 첫 주행은 반드
 **레포 루트에서** 실행합니다. "서버컴/모델컴"이 따로 있는 게 아니라 **같은 컴퓨터의
 터미널 두 개**입니다.
 
-먼저 레포 루트로 가서, 여기가 맞는지부터 확인하세요. 아래 모든 명령의 기준점입니다.
+먼저 레포를 받습니다. 홈 디렉토리처럼 아무 데나 두면 됩니다.
 
 ```bash
-cd ~/frodobot_server-omnivla-edge-autonomy    # 자기 경로로
-
-pwd                    # 지금 위치
-ls main.py policy/ environment.yml
+cd ~
+git clone https://github.com/suhyeon5280/forodobot_semantic_nav.git
+cd forodobot_semantic_nav
 ```
 
-세 개 다 찍히면 제대로 온 겁니다. `No such file or directory`가 뜨면 아직 레포 밖입니다.
+이미 clone 해둔 게 있으면 `cd`만 하고 [업데이트 받기](#업데이트-받기)를 보세요.
+
+여기가 맞는지 확인하세요. 아래 모든 명령의 기준점입니다.
+
+```bash
+pwd                    # 지금 위치
+ls main.py policy/ environment.yml models/
+```
+
+네 개 다 찍히면 제대로 온 겁니다. `No such file or directory`가 뜨면 아직 레포 밖입니다.
 
 > 새 터미널을 열 때마다 `cd`부터 다시 해야 합니다. 코드가 `static/`, `dataset/`,
 > `policy/calibration.json`을 **상대 경로**로 쓰기 때문에, 다른 디렉터리에서 실행하면
@@ -221,20 +242,126 @@ conda env update -f environment.yml --prune   # yml 변경분만 반영
 conda env remove -n rover                     # 통째로 지우고 다시 create
 ```
 
-### 2. 체크포인트 받기
+### 2. 모델 넣기
 
-`best.pth`는 약 415MB로 GitHub의 파일당 100MB 제한을 넘습니다. 그래서 커밋하지 않고
-**릴리스 첨부 파일**로 올려두었습니다. 릴리스 첨부 파일은 git 히스토리 밖에 있어서
-`git clone`은 가볍게 유지되고, 가중치만 따로 받습니다.
+가중치는 깃에 없습니다. GitHub는 파일당 100 MB가 한도인데 정책 하나가 415 MB입니다.
+그래서 **`models/` 폴더가 빈 상태로 커밋돼 있고**, 거기에 파일을 복사하면 됩니다.
+폴더를 새로 만들 필요도, 경로를 설정할 필요도 없습니다.
+
+clone 직후 상태를 먼저 확인하세요.
+
+```bash
+ls models/
+# README.md    ← 이것만 보이면 정상. 비어 있는 게 맞습니다.
+```
+
+#### 넣어야 하는 파일
+
+**파일 이름을 아래와 정확히 같게** 두세요. 코드가 이 이름으로 찾습니다.
+
+| 파일 | 크기 | 역할 | 필수 |
+|---|---|---|---|
+| `arm4p_s0_latest.pth` | 415M | 정책 (arm-4′) | 필수 |
+| `act4_cl6159_s2.pt` | 55M | CLIP 어댑터 | 필수 |
+| `full_H1_linear_lr0.001_s0.pt` | 1.1M | 국소화 헤드 | 필수 |
+| `yolov8n.pt` | 6.3M | 검출기 | 필수 |
+| `omni_deps/` | 12M | ultralytics, open_clip | 필수 |
+| `arm1_latest.pth` | 418M | 대조군 정책 (`--arm1`) | 선택 |
+| `frames/` | 0.5M | 점검용 프레임 | 선택 |
+| `clip/` | 338M | CLIP ViT-B/32 캐시 | 오프라인용 |
+| `hf/` | 571M | CLIP ViT-B/16 캐시 | 오프라인용 |
+
+넣고 나면 이렇게 보입니다.
+
+```
+models/
+├── README.md
+├── arm4p_s0_latest.pth
+├── act4_cl6159_s2.pt
+├── full_H1_linear_lr0.001_s0.pt
+├── yolov8n.pt
+├── arm1_latest.pth
+├── omni_deps/
+│   ├── ultralytics/
+│   └── open_clip/
+├── frames/episode_0020/image/*.jpg
+├── clip/ViT-B-32.pt
+└── hf/hub/models--timm--vit_base_patch16_clip_224.openai/
+```
+
+#### 학습한 컴퓨터에서 가져오는 경우
+
+원본 경로는 이렇습니다. 학습 저장소에서 이름을 바꿔 복사하세요.
+
+```bash
+E=~/suhyeon/edge_vlm
+O=~/suhyeon/OmniVLA_edge
+
+cp $E/results/phase4/omnivla/arm4p_s0/latest.pth            models/arm4p_s0_latest.pth
+cp $E/results/phase4/d79_ladder/act4_cl6159_s2.pt           models/
+cp $E/results/phase4/loc_head_full/full_H1_linear_lr0.001_s0.pt  models/
+cp $E/yolov8n.pt                                            models/
+cp -r $E/.omni_deps                                         models/omni_deps
+
+# 선택: 대조군
+cp $O/train/logs_frodo_lan_ft_full_lang/*/latest.pth         models/arm1_latest.pth
+
+# 선택: 점검용 프레임 몇 장
+mkdir -p models/frames/episode_0020/image
+(cd $O/omnivla_dataset_hf/episode_0020/image && ls *.jpg | sort | head -16 \
+   | xargs -I{} cp {} ~/forodobot_semantic_nav/models/frames/episode_0020/image/)
+
+# 선택: 현장에 인터넷이 없을 때
+mkdir -p models/clip models/hf/hub
+cp ~/.cache/clip/ViT-B-32.pt                                models/clip/
+cp -r ~/.cache/huggingface/hub/models--timm--vit_base_patch16_clip_224.openai \
+      models/hf/hub/
+```
+
+#### 제대로 들어갔는지 확인
+
+```bash
+sha256sum models/*.pth models/*.pt | cut -c1-16,65-
+```
+
+| 앞 16자리 | 파일 |
+|---|---|
+| `6bc0b5da318d4dd1` | `arm4p_s0_latest.pth` |
+| `f64da745b6f7214b` | `arm1_latest.pth` |
+| `ec1c47b50855a3a7` | `act4_cl6159_s2.pt` |
+| `9bc66758f1ac6e69` | `full_H1_linear_lr0.001_s0.pt` |
+| `f59b3d833e2ff32e` | `yolov8n.pt` |
+
+#### `omni_deps`는 pip로 설치하지 마세요
+
+`ultralytics`와 `open_clip`은 **`--no-deps`로 설치된 것**이라 디렉토리째 복사해야
+합니다. 그냥 `pip install ultralytics`를 하면 자기가 의존하는 torch를 끌고 와서
+지금 설치된 torch를 덮어씁니다. 그러면 GPU 커널이 안 맞아 첫 추론에서 죽습니다.
+
+`--no-deps`로 깔렸으니 그 둘의 의존 패키지는 같이 오지 않습니다. 실제 추론에서
+쓰이는 것들(`matplotlib`, `lmdb`, `safetensors`, `huggingface-hub`)은
+[policy/requirements.txt](policy/requirements.txt)에 적어뒀으므로 `rover` 환경을
+만들 때 같이 깔립니다. 예전에 만든 환경이 있으면 한 번 갱신하세요.
+
+```bash
+conda activate rover
+pip install -r policy/requirements.txt
+```
+
+#### `clip/`과 `hf/`는 인터넷이 있으면 생략
+
+CLIP 백본 두 개는 첫 실행 때 자동으로 받아서 `~/.cache`에 넣습니다. 폴더를 복사해
+두면 그쪽을 먼저 쓰고, **네트워크를 아예 안 탑니다.** 현장에서 인터넷이 없거나 느릴
+거면 미리 복사하세요.
+
+#### `--upstream`으로 원래 모델도 쓰려면
+
+`best.pth`는 예전처럼 릴리스 첨부 파일에서 받아 **레포 루트**에 둡니다. `models/`가
+아닙니다.
 
 ```bash
 curl -L -o best.pth \
   https://github.com/minsong0206/frodobot_server/releases/download/omnivla-v1/best.pth
-```
-
-레포 루트에 두세요. 다른 태그로 올렸다면 URL을 맞춰주세요.
-
-```bash
 ls -lh best.pth        # 415M 근처면 정상. 몇 KB면 다운로드 실패(HTML 에러 페이지)
 ```
 
@@ -273,25 +400,54 @@ Playwright 번들 Chromium 순으로 찾습니다. 특정 브라우저를 강제
 
 ### 4. 오프라인 점검
 
-서버도 로봇도 필요 없습니다. `(rover)` 환경에서 레포 루트에 있으면 바로 실행됩니다.
+**로봇에 붙이기 전에 반드시 여기서 통과시키세요.** 서버도 로봇도 필요 없습니다.
+`(rover)` 환경에서 레포 루트에 있으면 바로 실행됩니다.
 
 ```bash
-python -m policy.check_model --ckpt best.pth
+python -m policy.check_ours
 ```
 
-`state_dict matched strict=True`가 뜨고, 모달리티별 waypoint와 추론 시간이 출력되면
-정상입니다 (RTX 4070 SUPER 기준 약 22ms/frame — 3Hz에 여유가 많습니다).
+세 가지를 봅니다.
 
-state_dict가 안 맞으면 그 체크포인트는 OmniVLA-edge 모델이 아니고, 아래 내용이 전부
-무의미합니다.
+1. **regression** — `--upstream` 경로(`best.pth`)가 여전히 도는지. `best.pth`는 릴리스
+   첨부 파일이라 clone에는 없습니다. **없으면 `SKIP`이고 실패가 아닙니다.**
+2. **port** — 지정 프레임에서 어순을 바꾼 두 문장이 **오프라인 참조와 ±0.01 m 안에서**
+   맞는지. 전처리가 한 군데라도 틀어지면 여기서 잡힙니다.
+3. **timing** — tick 시간이 333 ms 예산 안인지.
 
-실제 프레임으로 돌려보려면:
+정상이면 마지막에 이렇게 나옵니다.
+
+```
+  "the white van next to the red truck"
+    endpoint lateral: ours -0.20499 m   reference -0.20499 m   delta 0.00000 m   PASS
+  "the red truck next to the white van"
+    endpoint lateral: ours +0.15277 m   reference +0.15277 m   delta 0.00000 m   PASS
+  PASS: port reproduces the reference
+  ...
+  === summary ===
+    regression  SKIP     ← best.pth 가 없으면 정상
+    port        PASS
+    timing      PASS
+```
+
+`models/`에 파일이 빠져 있으면 **무엇이 없는지 목록으로** 알려줍니다.
+
+`models/frames/`를 복사하지 않았다면 port와 timing이 프레임을 못 찾습니다. 전체
+데이터셋이 있는 컴퓨터라면 그쪽을 가리키세요.
 
 ```bash
-python -m policy.check_model --ckpt best.pth \
-    --image dataset/sessions/<세션>/images/<프레임>.jpg \
-    --prompt "the blue trash bin"
+OMNIVLA_DATASET_ROOT=~/suhyeon/OmniVLA_edge/omnivla_dataset_hf \
+  python -m policy.check_ours
 ```
+
+대조군까지 같이 점검하려면 `--with-arm1`을 붙입니다 (`arm1_latest.pth` 필요).
+
+```bash
+python -m policy.check_ours --with-arm1
+```
+
+**port가 FAIL이면 거기서 멈추세요.** 가중치나 전처리가 어긋난 상태라 주행 결과를
+해석할 수 없습니다.
 
 여기까지 끝나면 최초 설정은 끝입니다. 이후로는 [실행](#실행)의 터미널 두 개만 반복합니다.
 
@@ -304,7 +460,7 @@ python -m policy.check_model --ckpt best.pth \
 합니다.
 
 ```bash
-cd ~/frodobot_server-omnivla-edge-autonomy
+cd ~/forodobot_semantic_nav
 git pull
 
 conda activate rover
@@ -381,7 +537,7 @@ sed -i 's/^CHROME_EXECUTABLE_PATH=/# CHROME_EXECUTABLE_PATH=/' .env
 ### 터미널 1 — SDK 서버
 
 ```bash
-cd ~/frodobot_server-omnivla-edge-autonomy
+cd ~/forodobot_semantic_nav
 conda activate rover
 hypercorn main:app
 ```
@@ -426,10 +582,12 @@ curl -s http://127.0.0.1:8000/data | head -c 300
 **새 터미널을 열고** — 터미널 1은 서버가 점유 중입니다:
 
 ```bash
-cd ~/frodobot_server-omnivla-edge-autonomy
+cd ~/forodobot_semantic_nav
 conda activate rover
-python -m policy.run_autonomy --ckpt best.pth
+python -m policy.run_autonomy
 ```
+
+체크포인트 경로를 줄 필요가 없습니다. `models/`에서 알아서 찾습니다.
 
 프롬프트가 `(rover)`인지 확인하세요. `(base)`인 채로 실행하면
 `ModuleNotFoundError: No module named 'torch'`가 납니다 — activate를 빼먹은 겁니다.
@@ -439,9 +597,8 @@ python -m policy.run_autonomy --ckpt best.pth
 
 **첫 주행이라면 여기서 `--dry-run`을 붙이세요** → [첫 주행](#첫-주행)
 
-위 명령은 레포에 원래 있던 OmniVLA-edge(`--upstream` 경로)를 돌립니다. 기본값은
-파인토닝한 **arm-4′**이며, 환경이 `rover`가 아니라 frodo_lan 입니다.
-자세한 것은 [정책 세 가지](#정책-세-가지)에 있습니다.
+이 명령은 파인튜닝한 **arm-4′**를 돌립니다. 대조군이나 원래 모델로 바꾸려면
+[정책 세 가지](#정책-세-가지)를 보세요.
 
 ### activate 없이 한 줄로 (선택)
 
@@ -449,9 +606,9 @@ python -m policy.run_autonomy --ckpt best.pth
 `operator UI: ...` 같은 로그가 실시간으로 안 보입니다.
 
 ```bash
-cd ~/frodobot_server-omnivla-edge-autonomy
-conda run --no-capture-output -n rover hypercorn main:app                             # 터미널 1
-conda run --no-capture-output -n rover python -m policy.run_autonomy --ckpt best.pth # 터미널 2
+cd ~/forodobot_semantic_nav
+conda run --no-capture-output -n rover hypercorn main:app                    # 터미널 1
+conda run --no-capture-output -n rover python -m policy.run_autonomy        # 터미널 2
 ```
 
 ### 브라우저
@@ -490,12 +647,12 @@ conda 환경에서 빠져나오려면 `conda deactivate`. 환경을 지울 필�
 
 ```bash
 # 터미널 1
-cd ~/frodobot_server-omnivla-edge-autonomy && conda activate rover
+cd ~/forodobot_semantic_nav && conda activate rover
 hypercorn main:app
 
 # 터미널 2
-cd ~/frodobot_server-omnivla-edge-autonomy && conda activate rover
-python -m policy.run_autonomy --ckpt best.pth
+cd ~/forodobot_semantic_nav && conda activate rover
+python -m policy.run_autonomy
 
 # 브라우저: http://localhost:8000/static/autonomy_control.html
 ```
@@ -507,30 +664,32 @@ python -m policy.run_autonomy --ckpt best.pth
 같은 제어 루프 위에서 정책 세 개를 고를 수 있습니다. 루프, 웨이포인트 변환, 안전
 장치는 전부 공통이고 **정책만** 바뀝니다.
 
-| 플래그 | 정책 | 체크포인트 | 환경 |
-|---|---|---|---|
-| (없음) | **arm-4′** — heatmap 4채널 판 | `edge_vlm/results/phase4/omnivla/arm4p_s0/latest.pth` | frodo_lan + `.omni_deps` |
-| `--arm1` | **arm-1** — 파인튜닝 전 원본. 현장 A/B 대조군 | `OmniVLA_edge/train/logs_frodo_lan_ft_full_lang/.../latest.pth` | frodo_lan + `.omni_deps` |
-| `--upstream` | 레포에 원래 있던 OmniVLA-edge | `best.pth` | `rover` |
+| 플래그 | 정책 | 체크포인트 |
+|---|---|---|
+| (없음) | **arm-4′** — heatmap 4채널 판. 파인튜닝한 것 | `models/arm4p_s0_latest.pth` |
+| `--arm1` | **arm-1** — 파인튜닝 전 원본. 현장 A/B 대조군 | `models/arm1_latest.pth` |
+| `--upstream` | 레포에 원래 있던 OmniVLA-edge | `best.pth` (레포 루트) |
+
+환경은 셋 다 `rover` 하나입니다.
 
 ```bash
-# arm-4′ (기본)
-PYTHONPATH=~/suhyeon/edge_vlm/.omni_deps \
-  ~/anaconda3/envs/frodo_lan/bin/python -m policy.run_autonomy
+conda activate rover
 
-# arm-1 대조군 — 같은 루프, 같은 프레임
-PYTHONPATH=~/suhyeon/edge_vlm/.omni_deps \
-  ~/anaconda3/envs/frodo_lan/bin/python -m policy.run_autonomy --arm1
-
-# 원래 경로
-conda activate rover && python -m policy.run_autonomy --upstream --ckpt best.pth
+python -m policy.run_autonomy                              # arm-4′ (기본)
+python -m policy.run_autonomy --arm1                       # 대조군
+python -m policy.run_autonomy --upstream --ckpt best.pth   # 원래 모델
 ```
 
-arm-4′와 arm-1은 `edge_vlm`·`OmniVLA_edge` 저장소를 **읽기 전용으로 import**합니다.
-두 저장소를 고치지 않으며, 경로는 `EDGE_VLM_ROOT`·`OMNIVLA_TRAIN_ROOT` 환경변수로
-바꿀 수 있습니다. `ultralytics`와 `open_clip`은 `edge_vlm/.omni_deps`에 있고
-[policy/ours_policy.py](policy/ours_policy.py)가 `sys.path`에 직접 넣으므로
-`PYTHONPATH`는 없어도 됩니다.
+세 경로 모두 **레포 안에서만** 해결됩니다. 정책 코드와 설정은
+[policy/refs/](policy/refs/)에 커밋돼 있고, 가중치는 `models/`에서 읽습니다.
+`ultralytics`와 `open_clip`도 `models/omni_deps`에서 읽으므로 `PYTHONPATH`를 줄
+필요가 없습니다. 다른 곳에 두었다면 `MODELS_DIR`, `OMNIVLA_REFS_ROOT`, `OMNI_DEPS`
+환경변수로 바꿀 수 있습니다.
+
+`policy/refs/`는 `edge_vlm`과 `OmniVLA_edge`에서 **바이트 단위로 그대로** 복사한
+것이고, 손대지 않습니다. 원본 디렉토리 구조까지 맞춰 둔 이유도 같습니다. 그 모듈
+몇 개가 import 시점에 상대 경로로 데이터 파일을 읽기 때문에, 구조를 유지하는 것이
+사본을 고치지 않는 유일한 방법입니다. 사본을 고치기 시작하면 원본과 조용히 어긋납니다.
 
 ### arm-4′가 매 tick 하는 일
 
@@ -560,16 +719,16 @@ arm-4′와 arm-1은 `edge_vlm`·`OmniVLA_edge` 저장소를 **읽기 전용으�
 ### 로봇에 붙이기 전 점검
 
 ```bash
-PYTHONPATH=~/suhyeon/edge_vlm/.omni_deps \
-  ~/anaconda3/envs/frodo_lan/bin/python -m policy.check_ours --with-arm1
+conda activate rover
+python -m policy.check_ours --with-arm1
 ```
 
-세 가지를 봅니다. ① `--upstream` 경로가 그대로 도는지, ② 지정 프레임에서 어순을
-바꾼 두 문장의 끝점 횡위치가 오프라인 참조와 ±0.01 m 안에서 맞는지, ③ tick 시간이
-333 ms 예산 안인지. 실측값은 [지연](#지연)에 있습니다.
+절차와 정상 출력은 [4. 오프라인 점검](#4-오프라인-점검)에 있습니다. 실측 지연은
+[지연](#지연)에 있습니다.
 
-`--tick-log <디렉토리>`를 주면 tick마다 프롬프트·파싱·후보·점수·선택·웨이포인트·
-단계별 시간이 `ticks.jsonl`로, 정책 입력 heatmap이 `thumbs/*.png`로 쌓입니다.
+기본으로 tick 로그가 `field_log/`에 쌓입니다. tick마다 프롬프트·파싱·후보·점수·
+선택·웨이포인트·단계별 시간이 `ticks.jsonl`로, 정책 입력 heatmap이 `thumbs/*.png`로
+들어갑니다. 위치를 바꾸려면 `--tick-log <디렉토리>`를 주세요.
 
 ### 눈금이 두 개입니다
 
@@ -614,7 +773,7 @@ PYTHONPATH=~/suhyeon/edge_vlm/.omni_deps \
 `--dry-run`으로 다시 띄웁니다.
 
 ```bash
-cd ~/frodobot_server-omnivla-edge-autonomy
+cd ~/forodobot_semantic_nav
 conda activate rover
 python -m policy.run_autonomy --ckpt best.pth --dry-run
 ```
@@ -800,18 +959,27 @@ CLIP의 77토큰을 넘으면 조용히 잘립니다.
 | (없음) | arm-4′ | 파인튜닝한 heatmap 4채널 정책 |
 | `--arm1` | 꺼짐 | 파인튜닝 전 원본. 현장 A/B 대조군 |
 | `--upstream` | 꺼짐 | 레포에 원래 있던 OmniVLA-edge |
-| `--tick-log` | 참조 저장소의 `d154_field_log` | tick 로그와 heatmap 썸네일 |
+| `--tick-log` | `field_log/` | tick 로그와 heatmap 썸네일 |
 
 **기본**
 
 | 옵션 | 기본값 | 설명 |
 |---|---|---|
-| `--ckpt` | 정책별 기본 체크포인트 | 체크포인트 경로 |
+| `--ckpt` | `models/` 안의 정책별 기본값 | 체크포인트 경로 |
 | `--server` | `http://localhost:8000` | SDK 서버 주소 |
 | `--device` | `cuda:0` | CUDA 장치여야 함 |
 | `--ui-port` | `8010` | `/state`, `/cmd` 포트 |
 | `--no-ui` | 꺼짐 | 웹 없이 실행. 목표를 미리 줘야 함 |
 | `--verbose` | 꺼짐 | 디버그 로그 |
+
+**환경변수** — 기본 위치를 쓰면 하나도 필요 없습니다.
+
+| 변수 | 기본값 | 용도 |
+|---|---|---|
+| `MODELS_DIR` | `<레포>/models` | 가중치 위치 |
+| `OMNI_DEPS` | `<MODELS_DIR>/omni_deps` | ultralytics, open_clip |
+| `OMNIVLA_REFS_ROOT` | `policy/refs` | 참조 코드·설정 위치 |
+| `OMNIVLA_DATASET_ROOT` | `<MODELS_DIR>/frames` | 점검용 프레임 위치 |
 
 **목표** — 전부 선택사항입니다. 지시문은 보통 웹에서 입력하고, `--prompt`는 입력창을
 미리 채워둘 뿐입니다. `--autostart`나 `--no-ui`처럼 **아무도 타이핑할 수 없는 경우에만**
@@ -895,6 +1063,9 @@ clip하고 회전 반경을 보존하는 리미터를 0.3 m/s, 0.3 rad/s에 겁�
 | [policy/check_model.py](policy/check_model.py) | 오프라인 체크포인트 점검 (`--upstream` 경로) |
 | [policy/ours_policy.py](policy/ours_policy.py) | arm-4′·arm-1 정책. 파싱 → 검출 → CLIP → heatmap 채널 |
 | [policy/check_ours.py](policy/check_ours.py) | arm-4′ 로봇 연결 전 점검 3종 |
+| [policy/refs/](policy/refs/) | 참조 저장소에서 그대로 가져온 코드·설정. **수정 금지** |
+| `models/` | 가중치. 빈 폴더로 커밋되고 내용은 gitignore → [모델 넣기](#2-모델-넣기) |
+| `field_log/` | tick 로그와 heatmap 썸네일. gitignore |
 | [static/autonomy_control.html](static/autonomy_control.html) | 조작 페이지 (SDK 서버가 서빙) |
 | [environment.yml](environment.yml) | `rover` conda 환경 하나 (Python 3.11 + [requirements.txt](requirements.txt) + [policy/requirements.txt](policy/requirements.txt)) |
 | `policy/calibration.json` | 측정된 속도 상수. 페이지가 생성, gitignore됨 |

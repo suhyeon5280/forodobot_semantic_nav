@@ -11,18 +11,24 @@ Three things differ from the shipped upstream policy:
 
 The policy forward pass and the waypoint -> command conversion are untouched.
 
-Ported from the reference implementations, which live in repositories that are
-read-only from here (imported, never modified):
+Ported from the reference implementations in the edge_vlm and OmniVLA_edge
+repositories. Those are not modified. The parts this needs are vendored byte for
+byte under `policy/refs/`, which is committed, so a clone plus the weights in
+`models/` is a complete deployment:
 
-    <edge_vlm>/experiments/omnivla/run_autonomy_ours.py   this class
-    <edge_vlm>/experiments/omnivla/d150_e2e.py            the numbers we match
-    <edge_vlm>/experiments/omnivla/arm_model.py           ArmModel, the 4ch wrapper
-    <edge_vlm>/experiments/omnivla/heatmap.py             HeatmapProducer
-    <OmniVLA_edge>/train/vint_train/models/il/il.py       IL_gps_map_mask3_lan2
+    refs/experiments/omnivla/arm_model.py       ArmModel, the 4-channel wrapper
+    refs/experiments/omnivla/heatmap.py         HeatmapProducer
+    refs/experiments/omnivla/d150_e2e.py        the numbers check_ours matches
+    refs/vint_train/models/il/il.py             IL_gps_map_mask3_lan2
+    refs/configs/experiment/*.yaml              every constant used here
 
-Runtime: the frodo_lan environment plus <edge_vlm>/.omni_deps, which is where
-ultralytics and open_clip are installed. This module appends that directory to
-sys.path itself, so exporting PYTHONPATH is optional.
+The vendored copies are never edited -- an edit is how they would start drifting
+from the originals. `refs/` mirrors the original directory layout for the same
+reason: several of those modules read data files by relative path at import
+time, and the layout is what keeps that working.
+
+Runtime: an environment with torch, plus `models/omni_deps` for ultralytics and
+open_clip. This module puts both on sys.path itself, so PYTHONPATH is optional.
 
 Two divergences from `run_autonomy_ours.py`, both requested and both outside the
 path the validation frame exercises (see `check_ours.py`):
@@ -49,42 +55,64 @@ import numpy as np
 logger = logging.getLogger("autonomy.ours")
 
 # ---------------------------------------------------------------------------
-# Where the read-only repositories live. Overridable so this is not pinned to
-# one machine's home directory.
+# Everything resolves from inside this repository, so a clone plus the weights
+# is the whole deployment.
+#
+#   policy/refs/  the reference code and config, committed. It mirrors the
+#                 edge_vlm layout on purpose: some of those modules read data
+#                 files by relative path at import time, so keeping the layout
+#                 means the vendored copies need no edits, and edits are what
+#                 would let them drift from the originals.
+#   models/       the weights, which are too large for git. Empty in a fresh
+#                 clone; drop the files in and nothing else needs configuring.
+#
+# Both are overridable, for a machine that keeps them somewhere else.
 # ---------------------------------------------------------------------------
-EDGE_VLM_ROOT = os.environ.get("EDGE_VLM_ROOT", "/home/shy/suhyeon/edge_vlm")
-OMNIVLA_TRAIN_ROOT = os.environ.get(
-    "OMNIVLA_TRAIN_ROOT", "/home/shy/suhyeon/OmniVLA_edge/train"
-)
-OMNI_DEPS = os.environ.get("OMNI_DEPS", os.path.join(EDGE_VLM_ROOT, ".omni_deps"))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(_HERE)
+REFS_ROOT = os.environ.get("OMNIVLA_REFS_ROOT", os.path.join(_HERE, "refs"))
+MODELS_DIR = os.environ.get("MODELS_DIR", os.path.join(REPO_ROOT, "models"))
 
-# Fine-tuned policy weights. Same architecture as the arm-1 original except the
-# FiLM branch's first conv takes 4 input channels instead of 3.
-DEFAULT_ARM4_CHECKPOINT = os.path.join(
-    EDGE_VLM_ROOT, "results/phase4/omnivla/arm4p_s0/latest.pth"
-)
-ADAPTER_PATH = os.path.join(
-    EDGE_VLM_ROOT, "results/phase4/d79_ladder/act4_cl6159_s2.pt"
-)
-LOC_HEAD_PATH = os.path.join(
-    EDGE_VLM_ROOT, "results/phase4/loc_head_full/full_H1_linear_lr0.001_s0.pt"
-)
-DETECTOR_WEIGHTS = os.path.join(EDGE_VLM_ROOT, "yolov8n.pt")
+# ultralytics and open_clip. They are installed with --no-deps so that they
+# cannot pull their own torch over the one the policy needs, which is why they
+# are carried as a directory rather than listed as requirements.
+OMNI_DEPS = os.environ.get("OMNI_DEPS", os.path.join(MODELS_DIR, "omni_deps"))
 
-# Config files the reference reads its constants from. Read-only, and the single
-# source for them -- this module introduces no new tunables of its own.
+# Optional offline caches. If these exist the two CLIP backbones are read from
+# here instead of being downloaded, which is what a field laptop needs.
+CLIP_CACHE = os.path.join(MODELS_DIR, "clip")
+HF_CACHE = os.path.join(MODELS_DIR, "hf")
+
+# Weights, all expected directly in models/ under these names.
+DEFAULT_ARM4_CHECKPOINT = os.path.join(MODELS_DIR, "arm4p_s0_latest.pth")
+DEFAULT_ARM1_CHECKPOINT = os.path.join(MODELS_DIR, "arm1_latest.pth")
+ADAPTER_PATH = os.path.join(MODELS_DIR, "act4_cl6159_s2.pt")
+LOC_HEAD_PATH = os.path.join(MODELS_DIR, "full_H1_linear_lr0.001_s0.pt")
+DETECTOR_WEIGHTS = os.path.join(MODELS_DIR, "yolov8n.pt")
+
+# What each file is, for the error message when one is missing. arm-1 needs
+# only its own checkpoint: it runs no detector and no CLIP grounding.
+ARM4_WEIGHTS = (
+    (DEFAULT_ARM4_CHECKPOINT, "arm-4' policy", "415M"),
+    (ADAPTER_PATH, "CLIP adapter", "55M"),
+    (LOC_HEAD_PATH, "localization head", "1.1M"),
+    (DETECTOR_WEIGHTS, "YOLOv8n detector", "6.3M"),
+)
+ARM1_WEIGHTS = ((DEFAULT_ARM1_CHECKPOINT, "arm-1 control policy", "418M"),)
+
+# Config files the reference reads its constants from. This module introduces no
+# new tunables of its own.
 _CFG_INTEGRATION = os.path.join(
-    EDGE_VLM_ROOT, "configs/experiment/omnivla_integration.yaml"
+    REFS_ROOT, "configs/experiment/omnivla_integration.yaml"
 )
-_CFG_E2E = os.path.join(EDGE_VLM_ROOT, "configs/experiment/d150_e2e.yaml")
+_CFG_E2E = os.path.join(REFS_ROOT, "configs/experiment/d150_e2e.yaml")
 _CFG_EVAL_SETS = os.path.join(
-    EDGE_VLM_ROOT, "configs/experiment/omnivla_eval_sets.yaml"
+    REFS_ROOT, "configs/experiment/omnivla_eval_sets.yaml"
 )
 
-# Field log location, as registered in the reference notes (D154 section 6).
-DEFAULT_TICK_LOG = os.path.join(
-    EDGE_VLM_ROOT, "results/phase4/omnivla/d154_field_log"
-)
+# Per-tick log. Defaults inside the repository so a field run writes somewhere
+# obvious; gitignored alongside the weights.
+DEFAULT_TICK_LOG = os.path.join(REPO_ROOT, "field_log")
 
 # CLIP patch grid the heatmap is pooled onto, and the diagonal that normalizes
 # the distance term. ViT-B/16 at 224 px gives 14x14 patches.
@@ -106,49 +134,93 @@ PEAK_BOX_SIZE = 0.25
 _PATHS_READY = False
 
 
+def required_weights(arm1_only: bool = False):
+    return ARM1_WEIGHTS if arm1_only else ARM4_WEIGHTS
+
+
+def missing_weights(arm1_only: bool = False) -> List[str]:
+    """Which of the required weight files are not in `models/` yet."""
+    return [
+        path
+        for path, _, _ in required_weights(arm1_only)
+        if not os.path.exists(path)
+    ]
+
+
+def weights_missing_message(arm1_only: bool = False) -> str:
+    which = "arm-1" if arm1_only else "arm-4'"
+    lines = [
+        f"{which} cannot start: weights are missing from {MODELS_DIR}",
+        "",
+        "They are too large for git, so a fresh clone has an empty models/.",
+        "Copy these into it:",
+        "",
+    ]
+    for path, what, size in required_weights(arm1_only):
+        mark = "missing" if not os.path.exists(path) else "ok"
+        lines.append(
+            f"  [{mark:>7s}] {os.path.basename(path):32s} {size:>6s}  {what}"
+        )
+    lines += ["", "See the README section on putting the models in place."]
+    return "\n".join(lines)
+
+
 @contextlib.contextmanager
-def _edge_vlm_cwd():
-    """Import the reference modules from the edge_vlm root, then change back.
+def _refs_cwd():
+    """Import the reference modules from `policy/refs`, then change back.
 
     Several of them read data files by relative path at import time, so they
-    only import cleanly from that directory. The deployment process resolves its
-    own paths relative to the repository root, so the change is undone straight
-    away rather than left in place.
+    only import cleanly with that directory as the working directory. The
+    deployment process resolves its own paths relative to the repository root,
+    so the change is undone straight away rather than left in place.
     """
     previous = os.getcwd()
-    os.chdir(EDGE_VLM_ROOT)
+    os.chdir(REFS_ROOT)
     try:
         yield
     finally:
         os.chdir(previous)
 
 
-def _bootstrap_paths() -> None:
-    """Put the read-only repositories and the extra deps on `sys.path`.
+def _bootstrap_paths(need_omni_deps: bool = True) -> None:
+    """Put the vendored reference code and the extra deps on `sys.path`.
 
-    `.omni_deps` is appended rather than prepended: it holds only ultralytics
-    and open_clip, neither of which exists in frodo_lan, so nothing in the
-    environment gets shadowed either way, and appending keeps it that way if
-    something is installed there later.
+    `omni_deps` is appended rather than prepended: it holds only ultralytics
+    and open_clip, neither of which exists in the environment, so nothing gets
+    shadowed either way, and appending keeps it that way if something is
+    installed there later.
+
+    The offline caches are wired up here too, because HF_HOME has to be set
+    before huggingface_hub is first imported.
     """
     global _PATHS_READY
     if _PATHS_READY:
         return
-    for path in (
-        os.path.join(EDGE_VLM_ROOT, "experiments/omnivla"),
-        EDGE_VLM_ROOT,
-        OMNIVLA_TRAIN_ROOT,
-    ):
-        if not os.path.isdir(path):
-            raise FileNotFoundError(
-                f"{path} not found. arm-4' imports the edge_vlm and OmniVLA_edge "
-                "repositories read-only; point EDGE_VLM_ROOT / OMNIVLA_TRAIN_ROOT "
-                "at them."
-            )
+    if not os.path.isdir(REFS_ROOT):
+        raise FileNotFoundError(
+            f"{REFS_ROOT} not found. It is committed to this repository; a "
+            "clone should have it. Set OMNIVLA_REFS_ROOT to point elsewhere."
+        )
+    for path in (os.path.join(REFS_ROOT, "experiments/omnivla"), REFS_ROOT):
         if path not in sys.path:
             sys.path.insert(0, path)
-    if os.path.isdir(OMNI_DEPS) and OMNI_DEPS not in sys.path:
-        sys.path.append(OMNI_DEPS)
+    if os.path.isdir(OMNI_DEPS):
+        if OMNI_DEPS not in sys.path:
+            sys.path.append(OMNI_DEPS)
+    elif need_omni_deps:
+        # arm-1 does not need these, which is why this is conditional.
+        raise FileNotFoundError(
+            f"{OMNI_DEPS} not found. It holds ultralytics and open_clip, which "
+            "are installed with --no-deps so they cannot replace torch. Copy "
+            "the directory into models/, or set OMNI_DEPS."
+        )
+    if os.path.isdir(HF_CACHE):
+        # Copying the cache in is a statement that this machine should not be
+        # reaching out, so stop it reaching out: otherwise it still contacts the
+        # hub to revalidate, which stalls on a field network.
+        os.environ.setdefault("HF_HOME", HF_CACHE)
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        logger.info("using the offline CLIP cache in %s", HF_CACHE)
     _PATHS_READY = True
 
 
@@ -204,7 +276,7 @@ class OursPolicy:
         arm1_only: bool = False,
         tick_log: Optional[str] = None,
     ) -> None:
-        _bootstrap_paths()
+        _bootstrap_paths(need_omni_deps=not arm1_only)
 
         import torch
         import yaml
@@ -213,6 +285,20 @@ class OursPolicy:
         self._torch = torch
         self.device = torch.device(device)
         self.arm1_only = bool(arm1_only)
+
+        # Fail here, with the list, rather than deep inside a loader. An empty
+        # models/ is the normal state of a fresh clone. An explicit --ckpt
+        # replaces the policy checkpoint only; the rest still has to be present.
+        policy_ckpt = (
+            DEFAULT_ARM1_CHECKPOINT if self.arm1_only else DEFAULT_ARM4_CHECKPOINT
+        )
+        outstanding = [
+            path
+            for path in missing_weights(self.arm1_only)
+            if not (ckpt_path and path == policy_ckpt)
+        ]
+        if outstanding:
+            raise FileNotFoundError(weights_missing_message(self.arm1_only))
 
         integration = yaml.safe_load(open(_CFG_INTEGRATION, encoding="utf-8"))
         e2e = yaml.safe_load(open(_CFG_E2E, encoding="utf-8"))
@@ -244,7 +330,7 @@ class OursPolicy:
                 f"CONTEXT_LEN {self.CONTEXT_LEN}"
             )
 
-        with _edge_vlm_cwd():
+        with _refs_cwd():
             from build_eval_sets import lemma
             from experiments.context_score import box_mask, patch_coords
             from d150_e2e import head_of
@@ -255,7 +341,7 @@ class OursPolicy:
         self.patch_xy = patch_coords(PATCH_GRID)
 
         self.person_words = {lemma(w) for w in eval_sets["person_synonyms"]}
-        coco_path = os.path.join(EDGE_VLM_ROOT, eval_sets["coco_instances"])
+        coco_path = os.path.join(REFS_ROOT, eval_sets["coco_instances"])
         self.coco80 = {
             lemma(c["name"])
             for c in json.load(open(coco_path, encoding="utf-8"))["categories"]
@@ -271,15 +357,29 @@ class OursPolicy:
         import clip as openai_clip
 
         self._clip = openai_clip
-        self.text_encoder, _ = openai_clip.load("ViT-B/32", device=self.device)
+        # models/clip/ if it was copied over, otherwise ~/.cache/clip and a
+        # download on first run.
+        clip_kwargs = (
+            {"download_root": CLIP_CACHE} if os.path.isdir(CLIP_CACHE) else {}
+        )
+        self.text_encoder, _ = openai_clip.load(
+            "ViT-B/32", device=self.device, **clip_kwargs
+        )
         self.text_encoder.to(torch.float32).eval()
 
-        with _edge_vlm_cwd():
+        with _refs_cwd():
             from vint_train.models.il.il import IL_gps_map_mask3_lan2
 
         if self.arm1_only:
             self.model = IL_gps_map_mask3_lan2(**model_kwargs)
-            arm1_ckpt = ckpt_path or integration["arm1_ckpt"]
+            arm1_ckpt = ckpt_path or DEFAULT_ARM1_CHECKPOINT
+            if not os.path.exists(arm1_ckpt):
+                raise FileNotFoundError(
+                    f"the arm-1 control checkpoint is not in models/: {arm1_ckpt}\n"
+                    "It is optional -- only --arm1 needs it. Copy it as "
+                    f"{os.path.basename(DEFAULT_ARM1_CHECKPOINT)} (418M), or pass "
+                    "--ckpt with its path."
+                )
             state = torch.load(arm1_ckpt, map_location="cpu", weights_only=False)
             missing, dropped = self.model.load_state_dict(state, strict=False)
             # The original checkpoint carries 12 dead `lgx.*` tensors that this
@@ -304,7 +404,7 @@ class OursPolicy:
                 len(dropped),
             )
         else:
-            with _edge_vlm_cwd():
+            with _refs_cwd():
                 import arm_model
                 from arm_model import ArmModel, _patch_first_conv
 
@@ -344,7 +444,7 @@ class OursPolicy:
             ArmModel.HEATMAP = self._precomputed
             ArmModel.MASK_P = 0.0  # training-time RGB dropout; we mask explicitly
 
-            with _edge_vlm_cwd():
+            with _refs_cwd():
                 from heatmap import HeatmapProducer
 
             self.heatmap = (

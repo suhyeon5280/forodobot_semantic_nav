@@ -1,0 +1,315 @@
+{
+  "preregistered": "notes/decisions.md D150 — 사용자 지시 (지정 프레임 육안 시험)",
+  "read_only_note": "추론만 · 학습 0회 · OmniVLA_edge 무수정 · **주석 박스 미사용**",
+  "env": "frodo_lan + .omni_deps (검출 단계는 edge_vlm .venv)",
+  "pipeline": {
+    "1_detector": "YOLOv8n conf 0.25 imgsz 640",
+    "2_parse": "'{A} next to {B}' · 관사만 제거 · 머리명사는 전치사 앞 (내 규칙)",
+    "3_score": "A 구 heatmap 의 **박스 내 patch max**",
+    "4_anchor": "B 구 heatmap **피크**. B 가 COCO 면 검출 박스 중심 병기",
+    "5_rule": "argmax_k [score_k − 0.25·dist(box_k 중심, B peak)/대각선]",
+    "6_channel": "선택 박스 안만 남긴 hA · 프레임별 min-max → arm-4' (D134 h2box)",
+    "7_baseline": "arm-1 **원본** · 텍스트는 **문장 전체**"
+  },
+  "arm4p_new_channel_norm": 3.892007350921631,
+  "arm1_dropped_keys": 12,
+  "caveat": [
+    "**육안 판정용이다. 수치 해석·판정 서술 없음** (D74-b)",
+    "우 패널의 후보 표시는 **이미지 x 대리**이고 로봇 좌표가 아니다",
+    "정책 텍스트는 arm-4' = A 구 · arm-1 = 문장 전체 (지시 ⑦)"
+  ],
+  "steps": [
+    {
+      "sentence": "the white van next to the red truck",
+      "A": "white van",
+      "B": "red truck",
+      "policy_mask_rgb": true,
+      "endpoint_lateral_nomask_m": 0.36195945739746094,
+      "A_head": "van",
+      "B_head": "truck",
+      "mapping": "A head 'van' -> NO COCO class (mapping FAILED) -> ALL boxes",
+      "n_dets_all": 3,
+      "n_candidates": 3,
+      "candidates": [
+        {
+          "i": 0,
+          "cat": "truck",
+          "conf": 0.8602796196937561,
+          "score_A": 0.8915042877197266,
+          "dist_to_Bpeak": 0.5139865536269572,
+          "final": 0.7630076493129873
+        },
+        {
+          "i": 1,
+          "cat": "car",
+          "conf": 0.452205628156662,
+          "score_A": 0.9581148028373718,
+          "dist_to_Bpeak": 0.06323153438065363,
+          "final": 0.9423069192422084
+        },
+        {
+          "i": 2,
+          "cat": "bicycle",
+          "conf": 0.29857924580574036,
+          "score_A": 0.6640787124633789,
+          "dist_to_Bpeak": 0.2051607258546574,
+          "final": 0.6127885309997145
+        }
+      ],
+      "B_peak_xy": [
+        0.9642857142857143,
+        0.4642857142857143
+      ],
+      "B_det_center": [
+        0.23771237730397843,
+        0.4856291115283966
+      ],
+      "selected": 1,
+      "endpoint_lateral_m": {
+        "arm4p": -0.2049889862537384,
+        "arm1": 0.46639710664749146
+      },
+      "failure_stage": null,
+      "short_context": true,
+      "frame": "episode_0020/00000000"
+    },
+    {
+      "sentence": "the red truck next to the white van",
+      "A": "red truck",
+      "B": "white van",
+      "policy_mask_rgb": true,
+      "endpoint_lateral_nomask_m": 0.346936970949173,
+      "A_head": "truck",
+      "B_head": "van",
+      "mapping": "A head 'truck' -> COCO 'truck'",
+      "n_dets_all": 3,
+      "n_candidates": 1,
+      "candidates": [
+        {
+          "i": 0,
+          "cat": "truck",
+          "conf": 0.8602796196937561,
+          "score_A": 0.9154558181762695,
+          "dist_to_Bpeak": 0.5139865536269572,
+          "final": 0.7869591797695302
+        }
+      ],
+      "B_peak_xy": [
+        0.9642857142857143,
+        0.4642857142857143
+      ],
+      "B_det_center": null,
+      "selected": 0,
+      "endpoint_lateral_m": {
+        "arm4p": 0.152772456407547,
+        "arm1": 0.4574565887451172
+      },
+      "failure_stage": null,
+      "short_context": true,
+      "frame": "episode_0020/00000000"
+    },
+    {
+      "sentence": "the person next to the white van",
+      "A": "person",
+      "B": "white van",
+      "policy_mask_rgb": true,
+      "endpoint_lateral_nomask_m": null,
+      "A_head": "person",
+      "B_head": "van",
+      "mapping": "A head 'person' -> COCO 'person'",
+      "n_dets_all": 3,
+      "n_candidates": 0,
+      "candidates": [],
+      "B_peak_xy": [
+        0.03571428571428571,
+        0.5357142857142857
+      ],
+      "B_det_center": null,
+      "selected": null,
+      "endpoint_lateral_m": {
+        "arm4p": null,
+        "arm1": null
+      },
+      "failure_stage": "(1) ZERO CANDIDATES - A head 'person' -> COCO 'person'",
+      "short_context": false,
+      "frame": "episode_0020/00000026"
+    },
+    {
+      "sentence": "the white van next to the person",
+      "A": "white van",
+      "B": "person",
+      "policy_mask_rgb": true,
+      "endpoint_lateral_nomask_m": -0.22600650787353516,
+      "A_head": "van",
+      "B_head": "person",
+      "mapping": "A head 'van' -> NO COCO class (mapping FAILED) -> ALL boxes",
+      "n_dets_all": 3,
+      "n_candidates": 3,
+      "candidates": [
+        {
+          "i": 0,
+          "cat": "bicycle",
+          "conf": 0.7881342768669128,
+          "score_A": 0.6479635834693909,
+          "dist_to_Bpeak": 0.053852620422227306,
+          "final": 0.634500428363834
+        },
+        {
+          "i": 1,
+          "cat": "car",
+          "conf": 0.6005972623825073,
+          "score_A": 0.9283615350723267,
+          "dist_to_Bpeak": 0.14963479108132488,
+          "final": 0.8909528373019955
+        },
+        {
+          "i": 2,
+          "cat": "car",
+          "conf": 0.329880028963089,
+          "score_A": 0.6058216691017151,
+          "dist_to_Bpeak": 0.11351024109610044,
+          "final": 0.5774441088276899
+        }
+      ],
+      "B_peak_xy": [
+        0.39285714285714285,
+        0.5357142857142857
+      ],
+      "B_det_center": null,
+      "selected": 1,
+      "endpoint_lateral_m": {
+        "arm4p": 0.24923297762870789,
+        "arm1": -0.1801929771900177
+      },
+      "failure_stage": null,
+      "short_context": false,
+      "frame": "episode_0020/00000026"
+    },
+    {
+      "sentence": "the boy in blue clothes next to the girl in a pink dress",
+      "A": "boy in blue clothes",
+      "B": "girl in a pink dress",
+      "policy_mask_rgb": true,
+      "endpoint_lateral_nomask_m": 0.3127288818359375,
+      "A_head": "boy",
+      "B_head": "girl",
+      "mapping": "A head 'boy' -> COCO 'person'",
+      "n_dets_all": 2,
+      "n_candidates": 2,
+      "candidates": [
+        {
+          "i": 0,
+          "cat": "person",
+          "conf": 0.612628698348999,
+          "score_A": 0.8975301384925842,
+          "dist_to_Bpeak": 0.05873144171759688,
+          "final": 0.882847278063185
+        },
+        {
+          "i": 1,
+          "cat": "person",
+          "conf": 0.44889867305755615,
+          "score_A": 0.8730872273445129,
+          "dist_to_Bpeak": 0.12557579727823012,
+          "final": 0.8416932780249554
+        }
+      ],
+      "B_peak_xy": [
+        0.25,
+        0.5357142857142857
+      ],
+      "B_det_center": [
+        0.2350076660513878,
+        0.6174088045954704
+      ],
+      "selected": 0,
+      "endpoint_lateral_m": {
+        "arm4p": 0.29710355401039124,
+        "arm1": 0.31027090549468994
+      },
+      "failure_stage": null,
+      "short_context": false,
+      "frame": "episode_0030/00000681"
+    },
+    {
+      "sentence": "the girl in a pink dress next to the boy in blue clothes",
+      "A": "girl in a pink dress",
+      "B": "boy in blue clothes",
+      "policy_mask_rgb": true,
+      "endpoint_lateral_nomask_m": 0.0189763642847538,
+      "A_head": "girl",
+      "B_head": "boy",
+      "mapping": "A head 'girl' -> COCO 'person'",
+      "n_dets_all": 2,
+      "n_candidates": 2,
+      "candidates": [
+        {
+          "i": 0,
+          "cat": "person",
+          "conf": 0.612628698348999,
+          "score_A": 0.8352850079536438,
+          "dist_to_Bpeak": 0.012848341416823582,
+          "final": 0.8320729225994379
+        },
+        {
+          "i": 1,
+          "cat": "person",
+          "conf": 0.44889867305755615,
+          "score_A": 0.6686707735061646,
+          "dist_to_Bpeak": 0.14907842824983059,
+          "final": 0.6314011664437069
+        }
+      ],
+      "B_peak_xy": [
+        0.25,
+        0.6071428571428571
+      ],
+      "B_det_center": [
+        0.2350076660513878,
+        0.6174088045954704
+      ],
+      "selected": 0,
+      "endpoint_lateral_m": {
+        "arm4p": 0.25254982709884644,
+        "arm1": 0.32310932874679565
+      },
+      "failure_stage": null,
+      "short_context": false,
+      "frame": "episode_0030/00000681"
+    }
+  ],
+  "policy_mask_rgb_default": true,
+  "provenance": {
+    "backfilled": false,
+    "seed": 0,
+    "argv": [
+      "experiments/omnivla/d150_e2e.py",
+      "--stage",
+      "main"
+    ],
+    "cmdline": "experiments/omnivla/d150_e2e.py --stage main",
+    "git": {
+      "sha": "111000b0b753764b2189b1127a4864331dfc8b70",
+      "dirty": true,
+      "dirty_files": [
+        "M experiments/omnivla/d150_e2e.py",
+        " M results/phase4/omnivla/arm4aux_mu0.1.log",
+        "?? results/phase4/omnivla/d153_e2e_mask/"
+      ],
+      "describe": "111000b-dirty"
+    },
+    "config": {
+      "path": "/home/shy/suhyeon/edge_vlm/configs/experiment/d150_e2e.yaml",
+      "sha256": "cb50de8d97327ceb26682d02aeb728d160e1745e306a57d0669c1ae472739e46"
+    },
+    "inputs": {},
+    "started_at": "2026-09-18T11:50:10+09:00",
+    "env": {
+      "python": "3.10.20",
+      "torch": "2.13.0+cu130",
+      "cuda": "13.0",
+      "gpu": "NVIDIA GeForce RTX 4070 SUPER",
+      "open_clip": "3.3.0"
+    }
+  }
+}

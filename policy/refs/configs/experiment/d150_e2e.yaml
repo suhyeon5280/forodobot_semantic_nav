@@ -1,0 +1,18 @@
+# D150 — 지정 프레임 × 어순 교환 문장의 end-to-end 시각화. 규칙 3. **추론만**
+dataset_root: "/home/shy/suhyeon/OmniVLA_edge/omnivla_dataset_hf"
+frames:
+  - "episode_0020/00000000"
+  - "episode_0020/00000026"
+  - "episode_0030/00000681"
+sentence_pairs:            # 프레임 순서와 1:1. 각 쌍은 **어순 교환**이다
+  - ["the white van next to the red truck", "the red truck next to the white van"]
+  - ["the person next to the white van", "the white van next to the person"]
+  - ["the boy in blue clothes next to the girl in a pink dress",
+     "the girl in a pink dress next to the boy in blue clothes"]
+detector:
+  weights: "yolov8n.pt"
+  conf: 0.25               # 사용자 지정 (D145 §3 결정 시험과 같은 값)
+  imgsz: 640
+lambda_d: 0.25             # anchor_localize.yaml selected_lambda 와 같은 값. 새 상수 없음
+panel_px: 420
+traj_range_m: [2.0, 4.0]   # 횡 ±2 m · 전방 0~4 m (그림 축척. 판정용 아님)

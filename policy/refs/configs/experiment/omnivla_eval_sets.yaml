@@ -1,0 +1,10 @@
+# D118 — E1/E2 평가 세트 구성. 규칙 3. **읽기 전용**
+dataset_root: "/home/shy/suhyeon/OmniVLA_edge/omnivla_dataset_hf"
+coco_instances: "data/coco/annotations/instances_val2017.json"
+test_episodes: ["episode_0010", "episode_0020", "episode_0030"]   # 그쪽 등록 분할
+min_sep_m: 0.3          # grounding_test.py 기본값. 새 상수를 만들지 않는다
+prompt_blocklist: [asphalt, road, roads, roadway, roadways, pavement, paved, tarmac,
+                   ground, floor, surface, sidewalk, gravel, dirt, lane, lanes,
+                   path, pathway, drop, mud, cobblestone, area]
+person_synonyms: ["man","woman","men","women","boy","girl","people","person",
+                  "guy","lady","child","kid","pedestrian","rider"]

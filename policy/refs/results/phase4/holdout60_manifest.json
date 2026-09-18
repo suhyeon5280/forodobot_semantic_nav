@@ -1,0 +1,148 @@
+{
+  "n_pairs": 60,
+  "sha256": "26729b84595089bf4e68a36098c6f547d548c2fc2851a956151067ee4cc9e8c3",
+  "pair_ids": [
+    "1593052_shirt",
+    "1593090_shirt",
+    "2316637_bike",
+    "2316671_person",
+    "2319653_sign",
+    "2321258_person",
+    "2321609_animals",
+    "2324339_skin",
+    "2327099_shirt",
+    "2348045_person",
+    "2348222_cat",
+    "2352069_person",
+    "2359811_leaves",
+    "2362079_shirt",
+    "2364988_people",
+    "2366570_remote",
+    "2368533_display",
+    "2369222_boy",
+    "2373461_man",
+    "2373864_shirt",
+    "2376557_design",
+    "2377267_ottoman",
+    "2377690_flower",
+    "2378090_snowboard",
+    "2381364_sandwich",
+    "2383514_man",
+    "2383788_man",
+    "2384305_car",
+    "2387261_guitar",
+    "2387295_bus",
+    "2389310_juice",
+    "2391124_horse",
+    "2393467_mirror",
+    "2396366_shirt",
+    "2398638_bag",
+    "2398988_decoration",
+    "2399184_player",
+    "2399374_baseball_player",
+    "2400148_man",
+    "2401494_street",
+    "2401603_door",
+    "2401745_countertop",
+    "2404566_person",
+    "2405242_grill",
+    "2406604_hat",
+    "2407177_man",
+    "2407469_hair",
+    "2407763_dog",
+    "2408151_umbrella",
+    "2409201_kite",
+    "2412247_wine",
+    "2412407_kite",
+    "2414001_icing",
+    "2963_woman",
+    "4013_display",
+    "4777_cup",
+    "497920_parking_lot",
+    "713434_cake",
+    "713633_shirt",
+    "80_teapot"
+  ],
+  "human_acc": 0.8833333333333333,
+  "human_ci95": [
+    0.8,
+    0.95
+  ],
+  "human_n": 60,
+  "excluded_from_judged70": [
+    {
+      "pair_id": "2318178_tree",
+      "attr": "tall"
+    },
+    {
+      "pair_id": "2369042_balloon",
+      "attr": "large"
+    },
+    {
+      "pair_id": "2389730_salad",
+      "attr": "bright"
+    },
+    {
+      "pair_id": "2381424_book",
+      "attr": "thick"
+    },
+    {
+      "pair_id": "2409883_wine_glass",
+      "attr": "large"
+    },
+    {
+      "pair_id": "2316568_tree_trunk",
+      "attr": "skinny"
+    },
+    {
+      "pair_id": "2321915_lemon",
+      "attr": "small"
+    },
+    {
+      "pair_id": "4938_rock",
+      "attr": "long"
+    },
+    {
+      "pair_id": "2385846_shadow",
+      "attr": "thin"
+    },
+    {
+      "pair_id": "2386921_grass",
+      "attr": "large"
+    }
+  ],
+  "excluded_human_acc": 0.7,
+  "purpose": "판정 홀드아웃 불변 명부. 이후 모든 판정은 이 명부와 일치 검증을 통과해야 유효하다. 생성 함수가 아니라 파일이 표본이다 (D11 3번째 사례).",
+  "provenance_of_60": "오라클 판정 70쌍 중 gen_hard_attr.py 의 size 필터로 10쌍이 세트에서 빠진 결과. 의도된 필터다 (B7 종결).",
+  "provenance": {
+    "backfilled": false,
+    "seed": 0,
+    "argv": [
+      "-"
+    ],
+    "cmdline": "-",
+    "git": {
+      "sha": "8ad56856d5b38dd39d140a36886c69dc0c4a97a8",
+      "dirty": false,
+      "dirty_files": [],
+      "describe": "8ad5685"
+    },
+    "config": {
+      "path": "experiments/gen_hard_attr.py",
+      "sha256": "9c16e321fd8237d84aa5879e47ec884a6a09da3e9ab900be210e526bd869aa2e",
+      "note": "세트를 정의하는 것은 config 가 아니라 생성 스크립트다"
+    },
+    "inputs": {
+      "results/oracle/items.json": "93f2ce263ab652cf4619e65a5180f75d421274bc7e11ebcc6d18e82f77b6cc9e",
+      "results/oracle/responses.jsonl": "e4fef300aa2b754ef7bae047cb32ae9adf75eaa021d473f680e9006a516a65d5"
+    },
+    "started_at": "2026-08-13T11:01:31+09:00",
+    "env": {
+      "python": "3.11.7",
+      "torch": "2.13.0+cu130",
+      "cuda": "13.0",
+      "gpu": "NVIDIA GeForce RTX 4070 SUPER",
+      "open_clip": "3.3.0"
+    }
+  }
+}

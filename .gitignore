@@ -25,6 +25,16 @@ static/*.wav
 # Policy checkpoints (best.pth is ~415 MB, published as a release asset)
 *.pth
 
+# Model weights go in models/, which is committed EMPTY on purpose: clone the
+# repo, drop the files in, done. Everything inside it is ignored except the
+# marker that keeps the directory in git.
+/models/*
+!/models/.gitkeep
+!/models/README.md
+
+# Per-tick field logs written by --tick-log (jsonl + heatmap thumbnails)
+/field_log/
+
 # Conda envs normally live under $CONDA_PREFIX/envs, but ignore in-repo ones
 # (conda env create -p ./envs/...) and any leftover venvs from the pre-conda setup
 /envs/
