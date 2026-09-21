@@ -73,7 +73,7 @@ def render_compare(image_path, prompt, out_path, device="cuda:0", panel_px=460):
     "black chair" and "orange chair" score alike. The crop path embeds the
     candidate's own pixels with the adapter, which is what separates them.
     """
-    _, panel_heat, panel_left, _, wrap = _reference_drawing()
+    _, panel_heat, panel_left, panel_traj, wrap = _reference_drawing()
 
     frame = Image.open(image_path).convert("RGB")
     policy = OursPolicy(device=device)
@@ -89,17 +89,45 @@ def render_compare(image_path, prompt, out_path, device="cuda:0", panel_px=460):
         np.argmax([s["heat_max"] - policy.lambda_d * s["dist"] for s in scores])
     )
 
+    # The trajectory the old score would have produced. Same frame, same policy,
+    # only the box that survives into the 4th channel differs, so this is the
+    # driving consequence of the score change rather than an argument about it.
+    old_channel = policy._channel(debug["grid_target"], candidates[old_sel]["box"])
+    if old_sel == new_sel:
+        old_waypoints = waypoints
+    else:
+        obs_img, goal_pose_t, map_images, black, goal_mask, text, current_img = (
+            debug["policy_inputs"]
+        )
+        saved_log, policy.tick_log = policy.tick_log, None
+        old_waypoints, _ = policy._run_arm4(
+            obs_img, goal_pose_t, map_images, black, goal_mask,
+            text, old_channel, current_img, dict(record), dict(record["timing_ms"]),
+        )
+        policy.tick_log = saved_log
+        policy.ticks.pop()  # that re-run is not a tick of its own
+
     P = panel_px
     before = panel_left(frame, candidates, old_sel, debug["peak"], None, P)
     after = panel_left(frame, candidates, new_sel, debug["peak"], None, P)
-    heat = panel_heat(
-        _grid_to_224(debug["grid_target"]), candidates[old_sel]["box"], P,
-        "what the heatmap path reads",
+    channel_before = panel_heat(
+        old_channel[0, 0].numpy(), candidates[old_sel]["box"], P,
+        "channel BEFORE",
     )
-    channel = panel_heat(
+    channel_after = panel_heat(
         debug["channel"][0, 0].numpy(), record["selected_box"], P,
-        "policy input channel (crop path)",
+        "channel AFTER",
     )
+
+    # panel_traj paints its first argument orange and its second blue, and
+    # writes its own legend for the arm-1 comparison it was built for. Cover
+    # that: here the two lines are two scoring paths, not two policies.
+    traj = panel_traj(waypoints[:, :2], old_waypoints[:, :2], [], None, P, (2.0, 4.0))
+    td = ImageDraw.Draw(traj)
+    td.rectangle([0, 0, P, 60], fill=(0, 0, 0))
+    td.text((6, 6), "(7) trajectory, from a standstill", fill=(255, 255, 255))
+    td.text((6, 24), "AFTER  crop_cos", fill=(255, 150, 40))
+    td.text((6, 40), "BEFORE heat_max", fill=(90, 150, 255))
 
     for panel, title, colour in (
         (before, "BEFORE  heat_max: heatmap in-box max", (120, 170, 255)),
@@ -122,13 +150,20 @@ def render_compare(image_path, prompt, out_path, device="cuda:0", panel_px=460):
             f'c{s["i"]:<5d}{s["heat_max"]:>10.4f}{old_final:>9.4f}{mark_old}'
             f'|{s["score"]:>10.4f}{s["final"]:>9.4f}{mark_new}   {s["dist"]:.3f}'
         )
+    end_before = float(old_waypoints[7, 1] * REF_WAYPOINT_SPACING)
+    end_after = float(waypoints[7, 1] * REF_WAYPOINT_SPACING)
+    v_b, w_b = waypoint_to_velocity(old_waypoints)
+    v_a, w_a = waypoint_to_velocity(waypoints)
     lines += [
         "",
-        f'selection moved from c{old_sel} to c{new_sel}'
-        if old_sel != new_sel else f'both paths pick c{new_sel}',
+        (f'selection moved from c{old_sel} to c{new_sel}'
+         if old_sel != new_sel else f'both paths pick c{new_sel}'),
+        f'endpoint lateral   BEFORE {end_before:+.3f} m     AFTER {end_after:+.3f} m',
+        f'rover command      BEFORE v={v_b:.3f} w={w_b:+.3f}     '
+        f'AFTER v={v_a:.3f} w={w_a:+.3f}',
     ]
 
-    panels = [before, after, heat, channel]
+    panels = [before, after, channel_before, channel_after, traj]
     text_h = 30 + 15 * len(lines)
     canvas = Image.new("RGB", (P * len(panels), P + text_h + 26), (12, 12, 14))
     draw = ImageDraw.Draw(canvas)
@@ -145,8 +180,8 @@ def render_compare(image_path, prompt, out_path, device="cuda:0", panel_px=460):
     canvas.save(out_path)
 
     print(f'\nprompt: {prompt}')
-    print(f'  BEFORE (heat_max) -> c{old_sel}')
-    print(f'  AFTER  (crop_cos) -> c{new_sel}')
+    print(f'  BEFORE (heat_max) -> c{old_sel}  endpoint {end_before:+.3f} m')
+    print(f'  AFTER  (crop_cos) -> c{new_sel}  endpoint {end_after:+.3f} m')
     for s in scores:
         print(
             f'   c{s["i"]} heat_max={s["heat_max"]:.4f}  crop_cos={s["score"]:.4f}'

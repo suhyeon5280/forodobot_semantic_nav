@@ -814,6 +814,13 @@ class OursPolicy:
             "peak": peak,
             "channel": channel,
             "selected": selected,
+            # The policy's own inputs, so a tool can re-run the forward pass
+            # with a different channel and compare the trajectories. Everything
+            # here is small: 96x96 obs and one 224x224 frame.
+            "policy_inputs": (
+                obs_img, goal_pose_t, map_images, black, goal_mask,
+                target, current_img,
+            ),
         }
         return self._run_arm4(
             obs_img, goal_pose_t, map_images, black, goal_mask,
