@@ -16,3 +16,7 @@ detector:
 lambda_d: 0.25             # anchor_localize.yaml selected_lambda 와 같은 값. 새 상수 없음
 panel_px: 420
 traj_range_m: [2.0, 4.0]   # 횡 ±2 m · 전방 0~4 m (그림 축척. 판정용 아님)
+# D161 — ③ 점수 경로. **기본값 = crop_cos** (판정 세트 67.46% 와 같은 경로)
+score_mode: "crop_cos"     # crop_cos | heat_max  (heat_max = D150~D158 구현)
+crop_margin: 0.10          # text_gate.crops_of 와 같은 값
+score_template: "a photo of a {}."   # act3_pilot 템플릿과 같은 형태

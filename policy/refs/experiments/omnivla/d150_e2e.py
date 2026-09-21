@@ -50,17 +50,25 @@ def iou(a, b):
     return i / ((a[2]-a[0])*(a[3]-a[1]) + (b[2]-b[0])*(b[3]-b[1]) - i + 1e-9)
 
 
-def match_coco_phrase(phrase, coco_names):
-    """**D157 ①** — 머리명사 단독 전에 **다단어 COCO 클래스**를 문구에서 찾는다.
+def match_coco_phrase(phrase, coco_names, head=None):
+    """**D157 ① + D161 정정** — 문구에서 COCO 이름을 찾되 **머리명사를 포함하는 이름을 우선**한다.
 
-    'a potted plant next to ...' → 'potted plant' (머리명사 'plant' 로 가면 매핑 실패).
-    긴 이름부터 본다. 단어 경계로만 맞춘다.
+    'a potted plant' → 'potted plant'  (머리명사 'plant' 를 포함한다)
+    'the orange chair' → **'chair'**   ('orange' 도 COCO 이름이지만 머리명사가 아니다.
+                                        D161 전에는 더 긴 'orange' 가 이겨 매핑이 뒤집혔다)
+    포함하는 이름이 없으면 **머리명사 경로로 넘긴다**(None) — 속성어가 대상을 가로채지 않게.
     """
+    import sys as _s
+    from build_eval_sets import lemma as _lem
     t = " " + " ".join(re.findall(r"[a-z]+", phrase.lower())) + " "
-    for nm in sorted(coco_names, key=lambda x: (-len(x.split()), -len(x))):
-        if " " + nm.lower() + " " in t:
-            return nm
-    return None
+    hits = [nm for nm in coco_names if " " + nm.lower() + " " in t]
+    if not hits:
+        return None
+    h = _lem(head if head is not None else head_of(phrase))
+    pref = [nm for nm in hits if h and h in {_lem(w) for w in nm.lower().split()}]
+    if not pref:
+        return None
+    return max(pref, key=lambda x: (len(x.split()), len(x)))
 
 
 def head_of(phrase):
@@ -211,6 +219,9 @@ def stage_main(cfg, mask_rgb=True, frames=None, pairs=None,
     ic = yaml.safe_load(open(ICFG))
     FRAMES = frames or cfg["frames"]; PAIRS = pairs or cfg["sentence_pairs"]
     LD = float(cfg["lambda_d"]); P = int(cfg["panel_px"]); G = 14
+    SCORE_MODE = cfg.get("score_mode", "crop_cos")          # **D161 기본값**
+    CROP_MARGIN = float(cfg.get("crop_margin", 0.10))
+    SCORE_TMPL = cfg.get("score_template", "a photo of a {}.")
     DIAG = float(np.sqrt(2.0)); dev = "cuda"
     H = ic["image_size"]; cs = ic["model"]["context_size"]
     mk = {k: ic["model"][k] for k in ("context_size", "len_traj_pred", "learn_angle",
@@ -336,14 +347,20 @@ def stage_main(cfg, mask_rgb=True, frames=None, pairs=None,
                 fail = f"(1) ZERO CANDIDATES after B-exclusion - {map_note}"
 
             # ③ 후보별 속성 점수 · ⑤ 규칙
+            # **D161 — 기본 경로가 crop_cos 로 바뀌었다** (판정 세트 67.46% 와 같은 경로).
+            # heat_max(구 구현)도 같이 재서 파일에 남긴다 — 두 경로를 나란히 볼 수 있게.
+            s_crop, cos_txt = hp.crop_cos(img, [d["box"] for d in cands], a or sent,
+                                          CROP_MARGIN, SCORE_TMPL)
             scored = []
             for i, d in enumerate(cands):
                 m = box_mask(d["box"], pc)
-                s = float(hA[m].max()) if m.any() else float("-inf")
+                s_heat = float(hA[m].max()) if m.any() else float("-inf")
+                s = s_crop[i] if SCORE_MODE == "crop_cos" else s_heat
                 c = cen(d["box"])
                 dist = float(np.hypot(c[0] - peak[0], c[1] - peak[1])) / DIAG
                 scored.append({"i": i, "cat": d["cat"], "conf": d["conf"],
-                               "score_A": s, "dist_to_Bpeak": dist, "final": s - LD * dist})
+                               "score_A": s, "score_crop_cos": s_crop[i], "score_heat_max": s_heat,
+                               "dist_to_Bpeak": dist, "final": s - LD * dist})
             sel = int(np.argmax([x["final"] for x in scored])) if scored else None
             # ⑥ 선택 박스 안만 남긴 1채널 → arm-4'  /  ⑦ arm-1 (문장 전체)
             t4 = t1 = None
@@ -399,8 +416,9 @@ def stage_main(cfg, mask_rgb=True, frames=None, pairs=None,
                 f'SENT: "{sent}"',
                 f'(2) parse  A="{a}"  B="{b}"   heads: A={ha_head} / B={hb_head}',
                 f'(1) detector: {len(dets_all)} boxes -> {len(cands)} candidates.  {map_note}',
-                f'(3) attr score / (5) final = score - {LD}*dist:  ' + " | ".join(
-                    f'c{x["i"]}({x["cat"]}) s={x["score_A"]:.3f} d={x["dist_to_Bpeak"]:.3f} f={x["final"]:.3f}'
+                f'(3) attr score [{SCORE_MODE}] / (5) final = score - {LD}*dist:  ' + " | ".join(
+                    f'c{x["i"]}({x["cat"]}) s={x["score_A"]:.3f} (heat {x["score_heat_max"]:.3f})'
+                    f' d={x["dist_to_Bpeak"]:.3f} f={x["final"]:.3f}'
                     for x in scored) if scored else "(3)(5) no candidate",
                 f'(4) B peak=({peak[0]:.3f},{peak[1]:.3f})' +
                 (f'  B det-center=({bcen[0]:.3f},{bcen[1]:.3f})' if bcen else '  B det-center=none (not COCO / not detected)'),
@@ -455,7 +473,9 @@ def stage_main(cfg, mask_rgb=True, frames=None, pairs=None,
            "env": "frodo_lan + .omni_deps (검출 단계는 edge_vlm .venv)",
            "pipeline": {"1_detector": f'YOLOv8n conf {det["config"]["conf"]} imgsz {det["config"]["imgsz"]}',
                         "2_parse": "'{A} next to {B}' · 관사만 제거 · 머리명사는 전치사 앞 (내 규칙)",
-                        "3_score": "A 구 heatmap 의 **박스 내 patch max**",
+                        "3_score": f"**{SCORE_MODE}** — crop_cos = 후보 crop(10% 확장) → "
+                                   "어댑터 pooled 임베딩 → A 텍스트 cos (판정 세트 67.46% 경로, "
+                                   "D161) · heat_max = 헤드 heatmap 박스 내 max (구 구현, 병기)",
                         "4_anchor": "B 구 heatmap **피크**. B 가 COCO 면 검출 박스 중심 병기",
                         "5_rule": f"argmax_k [score_k − {LD}·dist(box_k 중심, B peak)/대각선]",
                         "6_channel": "선택 박스 안만 남긴 hA · 프레임별 min-max → arm-4' (D134 h2box)",

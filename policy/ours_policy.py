@@ -310,6 +310,16 @@ class OursPolicy:
         self.lambda_d = float(e2e["lambda_d"])
         self.det_conf = float(e2e["detector"]["conf"])
         self.det_imgsz = int(e2e["detector"]["imgsz"])
+        # How a candidate is scored against the target phrase.
+        #   crop_cos  crop the box, embed it with the adapter, cosine against
+        #             the phrase. This is the path the adapter was judged on,
+        #             and the only one that reads adjectives.
+        #   heat_max  the localization head's heatmap, maxed inside the box.
+        #             It grounds the noun and ignores the adjective, so two
+        #             chairs of different colours score the same.
+        self.score_mode = e2e.get("score_mode", "crop_cos")
+        self.crop_margin = float(e2e.get("crop_margin", 0.10))
+        self.score_template = e2e.get("score_template", "a photo of a {}.")
         model_kwargs = {
             key: integration["model"][key]
             for key in (
@@ -333,19 +343,23 @@ class OursPolicy:
         with _refs_cwd():
             from build_eval_sets import lemma
             from experiments.context_score import box_mask, patch_coords
-            from d150_e2e import head_of
+            from d150_e2e import head_of, match_coco_phrase
 
         self._lemma = lemma
         self._box_mask = box_mask
         self._head_of = head_of
+        self._match_coco_phrase = match_coco_phrase
         self.patch_xy = patch_coords(PATCH_GRID)
 
         self.person_words = {lemma(w) for w in eval_sets["person_synonyms"]}
         coco_path = os.path.join(REFS_ROOT, eval_sets["coco_instances"])
-        self.coco80 = {
-            lemma(c["name"])
+        # The names as written, for multi-word matching ("potted plant"), and
+        # lemmatized for the head-noun path.
+        self.coco_names = [
+            c["name"]
             for c in json.load(open(coco_path, encoding="utf-8"))["categories"]
-        }
+        ]
+        self.coco80 = {lemma(n) for n in self.coco_names}
 
         self._normalize = Normalize(
             [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
@@ -589,8 +603,16 @@ class OursPolicy:
         return boxes
 
     def _coco_class_for(self, phrase: str) -> Tuple[str, Optional[str]]:
-        """Head noun of `phrase` and the COCO class to filter detections by."""
+        """Head noun of `phrase` and the COCO class to filter detections by.
+
+        A COCO name found anywhere in the phrase is only accepted when it
+        contains the head noun. "the orange chair" has to map to `chair`, not
+        to `orange` the fruit: an adjective must not take the phrase over.
+        """
         head = self._head_of(phrase or "")
+        multiword = self._match_coco_phrase(phrase or "", self.coco_names, head)
+        if multiword:
+            return head, multiword
         if self._lemma(head) in self.person_words:
             return head, "person"
         if self._lemma(head) in self.coco80:
@@ -728,12 +750,33 @@ class OursPolicy:
             record["fallback"] = "zero_candidates_peak_box"
         record["n_candidates"] = len(candidates)
 
+        # (4) attribute score per candidate. crop_cos crops the box out of the
+        # full-resolution frame and embeds it with the adapter, which is the
+        # path the adapter's accuracy was measured on and the only one that
+        # reads the adjective. The heatmap's in-box max is computed either way
+        # and logged next to it, because it is what earlier runs selected on.
+        step = time.time()
+        crop_scores = None
+        crop_text = ""
+        if self.score_mode == "crop_cos":
+            crop_scores, crop_text = self.heatmap.crop_cos(
+                frames[-1].convert("RGB"),
+                [c["box"] for c in candidates],
+                target,
+                self.crop_margin,
+                self.score_template,
+            )
+        timing["score"] = time.time() - step
+        record["score_mode"] = self.score_mode
+        record["crop_text"] = crop_text
+
         # (5) selection. The distance term is dropped when there is no anchor.
         step = time.time()
         scores = []
         for i, candidate in enumerate(candidates):
             mask = self._box_mask(candidate["box"], self.patch_xy)
-            score = float(grid_target[mask].max()) if mask.any() else -1e9
+            heat_max = float(grid_target[mask].max()) if mask.any() else -1e9
+            score = heat_max if crop_scores is None else float(crop_scores[i])
             if peak is None:
                 distance = 0.0
             else:
@@ -746,6 +789,7 @@ class OursPolicy:
                     "i": i,
                     "cat": candidate["cat"],
                     "score": score,
+                    "heat_max": heat_max,
                     "dist": distance,
                     "final": score - self.lambda_d * distance,
                 }

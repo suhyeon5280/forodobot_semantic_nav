@@ -40,8 +40,10 @@ class HeatmapProducer(nn.Module):
         assert variant in self.VARIANTS, variant
         import open_clip
         self.variant = variant
-        m, _, _ = open_clip.create_model_and_transforms(backbone, pretrained=pretrained,
-                                                        device=device)
+        m, _, pre = open_clip.create_model_and_transforms(backbone, pretrained=pretrained,
+                                                          device=device)
+        self.preprocess = pre                       # crop 판독용 (판정 세트와 같은 전처리)
+        self.tokenizer = open_clip.get_tokenizer(backbone)
         if variant in ("adapter", "adapter_head"):
             ad = torch.load(adapter_path, map_location="cpu", weights_only=False)
             miss = m.load_state_dict(ad["trainable"], strict=False)
@@ -64,6 +66,32 @@ class HeatmapProducer(nn.Module):
         self.register_buffer("im_s", torch.tensor(IMAGENET_STD).view(1, 3, 1, 1))
         self.register_buffer("cl_m", torch.tensor(CLIP_MEAN).view(1, 3, 1, 1))
         self.register_buffer("cl_s", torch.tensor(CLIP_STD).view(1, 3, 1, 1))
+
+    @torch.no_grad()
+    def crop_cos(self, pil_img, boxes, phrase, margin=0.10, template="a photo of a {}."):
+        """**판정 세트(67.46%) 와 같은 경로** — 후보 crop → 어댑터 pooled 임베딩 → 텍스트 cos.
+
+        `text_gate.crops_of` (박스 10% 확장) · `act3_pilot.embed_rows`
+        (patch l2 정규화 → 평균 → l2 정규화) 와 **같은 연산 순서**다.
+        **국소화 헤드를 지나지 않는다** — 헤드는 카테고리 국소화용이고
+        판정 세트 경로에 없다 (D112 · D129 §1-a).
+        """
+        W, Hh = pil_img.size
+        dev = self.im_m.device
+        px = []
+        for b in boxes:
+            x0, y0, x1, y1 = b
+            mx, my = (x1 - x0) * margin, (y1 - y0) * margin
+            c = pil_img.crop((int(max(0., x0 - mx) * W), int(max(0., y0 - my) * Hh),
+                              int(min(1., x1 + mx) * W), int(min(1., y1 + my) * Hh)))
+            if min(c.size) < 8: c = pil_img
+            px.append(self.preprocess(c))
+        if not px: return [], ""
+        pv, _ = _clip_patch_forward(self.clip.visual, torch.stack(px).to(dev), maskclip=False)
+        z = l2_normalize(l2_normalize(pv).mean(1))                       # [n, 512]
+        txt = template.format(phrase)
+        t = l2_normalize(self.clip.encode_text(self.tokenizer([txt]).to(dev)).float())[0]
+        return [float(v) for v in (z @ t)], txt
 
     @torch.no_grad()
     def forward(self, current_img, tokens):

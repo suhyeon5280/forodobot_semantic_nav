@@ -65,6 +65,97 @@ def _grid_to_224(grid):
     ) / 255.0
 
 
+def render_compare(image_path, prompt, out_path, device="cuda:0", panel_px=460):
+    """The two scoring paths side by side on the same frame.
+
+    Left pair: which box each path picks. The heatmap path reads the
+    localization head, which grounds the noun and ignores the adjective, so
+    "black chair" and "orange chair" score alike. The crop path embeds the
+    candidate's own pixels with the adapter, which is what separates them.
+    """
+    _, panel_heat, panel_left, _, wrap = _reference_drawing()
+
+    frame = Image.open(image_path).convert("RGB")
+    policy = OursPolicy(device=device)
+    waypoints, _ = policy.predict_waypoints([frame] * policy.CONTEXT_LEN, prompt=prompt)
+    record = policy.ticks[-1]
+    debug = policy.last_debug
+    scores = record["scores"]
+    candidates = debug["candidates"]
+
+    # Both winners, from the one run: the scores carry each path's number.
+    new_sel = record["selected"]
+    old_sel = int(
+        np.argmax([s["heat_max"] - policy.lambda_d * s["dist"] for s in scores])
+    )
+
+    P = panel_px
+    before = panel_left(frame, candidates, old_sel, debug["peak"], None, P)
+    after = panel_left(frame, candidates, new_sel, debug["peak"], None, P)
+    heat = panel_heat(
+        _grid_to_224(debug["grid_target"]), candidates[old_sel]["box"], P,
+        "what the heatmap path reads",
+    )
+    channel = panel_heat(
+        debug["channel"][0, 0].numpy(), record["selected_box"], P,
+        "policy input channel (crop path)",
+    )
+
+    for panel, title, colour in (
+        (before, "BEFORE  heat_max: heatmap in-box max", (120, 170, 255)),
+        (after, "AFTER  crop_cos: adapter crop cosine", (255, 180, 80)),
+    ):
+        d = ImageDraw.Draw(panel)
+        d.rectangle([0, 0, P, 18], fill=(0, 0, 0))
+        d.text((6, 3), title, fill=colour)
+
+    lines = [
+        f'PROMPT: "{prompt}"    text embedded: {record["crop_text"]!r}',
+        "",
+        f'{"cand":<6s}{"heat_max":>10s}{"final":>9s}   |{"crop_cos":>10s}{"final":>9s}   dist',
+    ]
+    for s in scores:
+        old_final = s["heat_max"] - policy.lambda_d * s["dist"]
+        mark_old = " <-BEFORE" if s["i"] == old_sel else "         "
+        mark_new = " <-AFTER" if s["i"] == new_sel else ""
+        lines.append(
+            f'c{s["i"]:<5d}{s["heat_max"]:>10.4f}{old_final:>9.4f}{mark_old}'
+            f'|{s["score"]:>10.4f}{s["final"]:>9.4f}{mark_new}   {s["dist"]:.3f}'
+        )
+    lines += [
+        "",
+        f'selection moved from c{old_sel} to c{new_sel}'
+        if old_sel != new_sel else f'both paths pick c{new_sel}',
+    ]
+
+    panels = [before, after, heat, channel]
+    text_h = 30 + 15 * len(lines)
+    canvas = Image.new("RGB", (P * len(panels), P + text_h + 26), (12, 12, 14))
+    draw = ImageDraw.Draw(canvas)
+    draw.text(
+        (8, 7),
+        f"attribute score: heatmap max vs adapter crop cosine  |  "
+        f"{os.path.basename(image_path)}  |  same detector boxes, same rule, "
+        f"same distance term; only the score changes",
+        fill=(255, 255, 255),
+    )
+    for i, panel in enumerate(panels):
+        canvas.paste(panel, (i * P, 26))
+    wrap(draw, "\n".join(lines), 8, P + 32, 300)
+    canvas.save(out_path)
+
+    print(f'\nprompt: {prompt}')
+    print(f'  BEFORE (heat_max) -> c{old_sel}')
+    print(f'  AFTER  (crop_cos) -> c{new_sel}')
+    for s in scores:
+        print(
+            f'   c{s["i"]} heat_max={s["heat_max"]:.4f}  crop_cos={s["score"]:.4f}'
+            f'  dist={s["dist"]:.3f}'
+        )
+    print(f'  saved: {out_path}')
+    return out_path
+
+
 def render(image_path, prompt, out_path, device="cuda:0", panel_px=420):
     heat_rgb, panel_heat, panel_left, panel_traj, wrap = _reference_drawing()
 
@@ -187,10 +278,18 @@ def main(argv=None):
     parser.add_argument("--out", default=None, help="output PNG")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--panel-px", type=int, default=420)
+    parser.add_argument(
+        "--compare",
+        action="store_true",
+        help="the two scoring paths side by side instead of the full pipeline",
+    )
     args = parser.parse_args(argv)
 
     out = args.out or os.path.splitext(os.path.basename(args.image))[0] + "_pipeline.png"
-    render(args.image, args.prompt, out, args.device, args.panel_px)
+    if args.compare:
+        render_compare(args.image, args.prompt, out, args.device, args.panel_px)
+    else:
+        render(args.image, args.prompt, out, args.device, args.panel_px)
     return 0
 
 
