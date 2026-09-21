@@ -481,6 +481,8 @@ class OursPolicy:
             )
 
         self.ticks: List[dict] = []
+        # Intermediates from the most recent tick, for visualize_pipeline.py.
+        self.last_debug: Optional[dict] = None
         self.tick_log = tick_log
         if self.tick_log:
             os.makedirs(os.path.join(self.tick_log, "thumbs"), exist_ok=True)
@@ -756,6 +758,19 @@ class OursPolicy:
 
         # (6) keep only the selected box's heatmap -> the 4th channel.
         channel = self._channel(grid_target, candidates[selected]["box"])
+
+        # Everything a picture of this tick would need. Kept for the last tick
+        # only, and not written anywhere: the jsonl log holds what is worth
+        # keeping, and the grids are two 14x14 arrays.
+        self.last_debug = {
+            "detections": detections,
+            "candidates": candidates,
+            "grid_target": grid_target,
+            "grid_anchor": grid_anchor,
+            "peak": peak,
+            "channel": channel,
+            "selected": selected,
+        }
         return self._run_arm4(
             obs_img, goal_pose_t, map_images, black, goal_mask,
             target, channel, current_img, record, timing,

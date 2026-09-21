@@ -772,6 +772,20 @@ python -m policy.check_ours --with-arm1
 선택·웨이포인트·단계별 시간이 `ticks.jsonl`로, 정책 입력 heatmap이 `thumbs/*.png`로
 들어갑니다. 위치를 바꾸려면 `--tick-log <디렉토리>`를 주세요.
 
+### 한 장으로 보기
+
+사진 하나를 넣으면 검출 → heatmap → 선택 → 정책 입력 채널 → 궤적까지 한 장에
+그립니다. 로봇도 서버도 필요 없습니다.
+
+```bash
+python -m policy.visualize_pipeline test.jpg \
+  --prompt "the chair next to the monitor" --out viz/out.png
+```
+
+프롬프트가 왜 그렇게 해석됐는지, 어느 박스가 왜 뽑혔는지(점수와 거리 항까지),
+정책이 실제로 받은 4번째 채널이 어떻게 생겼는지가 그림과 숫자로 같이 나옵니다.
+현장 명령을 정하기 전에 후보 문장을 여기에 넣어 보면 됩니다.
+
 ### 눈금이 두 개입니다
 
 참조 쪽 지표와 배포 쪽 주행은 **다른 눈금**을 씁니다. 같은 `(8,4)` 출력을 놓고도
@@ -1105,6 +1119,7 @@ clip하고 회전 반경을 보존하는 리미터를 0.3 m/s, 0.3 rad/s에 겁�
 | [policy/check_model.py](policy/check_model.py) | 오프라인 체크포인트 점검 (`--upstream` 경로) |
 | [policy/ours_policy.py](policy/ours_policy.py) | arm-4′·arm-1 정책. 파싱 → 검출 → CLIP → heatmap 채널 |
 | [policy/check_ours.py](policy/check_ours.py) | arm-4′ 로봇 연결 전 점검 3종 |
+| [policy/visualize_pipeline.py](policy/visualize_pipeline.py) | 사진 1장의 파이프라인 전 단계를 한 장으로 그림 |
 | [policy/refs/](policy/refs/) | 참조 저장소에서 그대로 가져온 코드·설정. **수정 금지** |
 | `models/` | 가중치. 빈 폴더로 커밋되고 내용은 gitignore → [모델 넣기](#2-모델-넣기) |
 | `field_log/` | tick 로그와 heatmap 썸네일. gitignore |

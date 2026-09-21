@@ -35,6 +35,9 @@ static/*.wav
 # Per-tick field logs written by --tick-log (jsonl + heatmap thumbnails)
 /field_log/
 
+# Pipeline pictures from policy/visualize_pipeline.py
+/viz/
+
 # Conda envs normally live under $CONDA_PREFIX/envs, but ignore in-repo ones
 # (conda env create -p ./envs/...) and any leftover venvs from the pre-conda setup
 /envs/
