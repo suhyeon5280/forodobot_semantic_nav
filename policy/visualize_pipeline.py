@@ -32,6 +32,7 @@ from .ours_policy import (
     PATCH_GRID,
     OursPolicy,
     _bootstrap_paths,
+    _center,
     _refs_cwd,
     parse_prompt,
 )
@@ -191,6 +192,186 @@ def render_compare(image_path, prompt, out_path, device="cuda:0", panel_px=460):
     return out_path
 
 
+def _index_in(pool, item):
+    """Where `item`'s box sits in `pool`, matched by value.
+
+    The two anchor modes are two separate runs, so each detects the frame
+    again and holds its own dicts. The boxes are identical -- same frame, same
+    weights -- but the objects are not, so identity would never match across
+    the pair and every label would come out blank.
+    """
+    box = item["box"] if isinstance(item, dict) else item
+    for i, other in enumerate(pool):
+        if all(abs(a - b) < 1e-9 for a, b in zip(other["box"], box)):
+            return i
+    return None
+
+
+def render_anchor_compare(image_path, prompts, out_path, device="cuda:0", panel_px=420):
+    """Where the anchor lands, the heatmap way and the crop-cosine way.
+
+    One row per prompt, so a word-order swap can be read off the same sheet.
+    Same frame, same detector boxes, same rule, same distance term: the only
+    thing that moves is how "B" of "A next to B" is placed, and `anchor_mode`
+    moves it. `heatmap_peak` is the pre-D164 behaviour -- the anchor is the
+    brightest patch of its own heatmap, and nothing is excluded from the
+    target's candidates. `crop_cos` scores the detector's boxes for the anchor
+    phrase and takes the winner's centre, which is also what makes that box
+    excludable.
+    """
+    if isinstance(prompts, str):
+        prompts = [prompts]
+    _, panel_heat, panel_left, panel_traj, wrap = _reference_drawing()
+
+    frame = Image.open(image_path).convert("RGB")
+    policy = OursPolicy(device=device)
+    context = [frame] * policy.CONTEXT_LEN
+
+    rows = []
+    for prompt in prompts:
+        runs = {}
+        for mode in ("heatmap_peak", "crop_cos"):
+            policy.anchor_mode = mode
+            waypoints, _ = policy.predict_waypoints(context, prompt=prompt)
+            runs[mode] = (waypoints, policy.ticks[-1], policy.last_debug)
+        rows.append((prompt, runs))
+
+    # One trajectory scale for every row, big enough for the largest path drawn
+    # and no bigger, because the reference's 2 x 4 m frame turns a 0.7 m path
+    # into a smudge in the corner.
+    reach = [
+        np.abs(w[:, :2] * REF_WAYPOINT_SPACING).max(axis=0)
+        for _, runs in rows
+        for w, _, _ in runs.values()
+    ]
+    forward = max(0.5, float(max(r[0] for r in reach)) * 1.25)
+    lateral = max(0.25, float(max(r[1] for r in reach)) * 1.6)
+
+    P = panel_px
+    text_h = 118
+    row_h = P + text_h
+    canvas = Image.new("RGB", (P * 5, 30 + row_h * len(rows)), (12, 12, 14))
+    draw = ImageDraw.Draw(canvas)
+    draw.text(
+        (8, 9),
+        f"D164 anchor placement: heatmap peak vs adapter crop cosine  |  "
+        f"{os.path.basename(image_path)}  |  same boxes, same rule, same "
+        f"distance term; only where B is placed changes",
+        fill=(255, 255, 255),
+    )
+
+    for row, (prompt, runs) in enumerate(rows):
+        top = 30 + row * row_h
+        before_wp, before_rec, before_dbg = runs["heatmap_peak"]
+        after_wp, after_rec, after_dbg = runs["crop_cos"]
+        every = after_dbg["candidates_all"]
+
+        panels = []
+        for tag, colour, (_, record, debug) in (
+            ("BEFORE  B = heatmap peak", (120, 170, 255), runs["heatmap_peak"]),
+            ("AFTER  B = crop cosine", (255, 180, 80), runs["crop_cos"]),
+        ):
+            chosen = _index_in(every, debug["candidates"][record["selected"]])
+            panel = panel_left(
+                frame, every, chosen,
+                debug["peak"] if debug["anchor_box"] is None else None,
+                _center(debug["anchor_box"]) if debug["anchor_box"] else None,
+                P,
+            )
+            d = ImageDraw.Draw(panel)
+            if debug["anchor_box"] is not None:
+                x0, y0, x1, y1 = [v * P for v in debug["anchor_box"]]
+                d.rectangle([x0, y0, x1, y1], outline=(80, 160, 255), width=4)
+                d.rectangle([x0, y0 + 16, x0 + 76, y0 + 31], fill=(0, 0, 0))
+                d.text((x0 + 3, y0 + 18), "B ANCHOR", fill=(80, 160, 255))
+            for i in debug["excluded"]:
+                x0, y0, x1, y1 = [v * P for v in every[i]["box"]]
+                d.line([x0, y0, x1, y1], fill=(255, 70, 70), width=3)
+                d.line([x0, y1, x1, y0], fill=(255, 70, 70), width=3)
+                d.rectangle([x0, y1 - 32, x0 + 90, y1 - 17], fill=(0, 0, 0))
+                d.text((x0 + 3, y1 - 31), "B EXCLUDED", fill=(255, 70, 70))
+            d.rectangle([0, 0, P, 18], fill=(0, 0, 0))
+            d.text((6, 3), tag, fill=colour)
+            panels.append(panel)
+
+        # The anchor heatmap the old path took its peak from, which is the
+        # evidence for why that peak cannot be trusted here.
+        panels.append(
+            panel_heat(
+                _grid_to_224(before_dbg["grid_anchor"]), None, P,
+                f'anchor heatmap {before_rec["B"]!r} - peak marked X at left',
+            )
+        )
+        panels.append(
+            panel_heat(
+                after_dbg["channel"][0, 0].numpy(), after_rec["selected_box"], P,
+                "4th channel handed to the policy (AFTER)",
+            )
+        )
+
+        same = np.allclose(before_wp, after_wp)
+        traj = panel_traj(
+            after_wp[:, :2], None if same else before_wp[:, :2],
+            [], None, P, (lateral, forward),
+        )
+        td = ImageDraw.Draw(traj)
+        td.rectangle([0, 0, P, 62], fill=(0, 0, 0))
+        td.text((6, 6), "trajectory, from a standstill", fill=(255, 255, 255))
+        td.text((6, 22), "AFTER  crop-cosine anchor", fill=(255, 150, 40))
+        td.text(
+            (6, 38),
+            "BEFORE identical - one line drawn" if same
+            else "BEFORE heatmap-peak anchor",
+            fill=(150, 150, 150) if same else (90, 150, 255),
+        )
+        panels.append(traj)
+
+        for i, panel in enumerate(panels):
+            canvas.paste(panel, (i * P, top))
+
+        lines = [f'PROMPT: "{prompt}"    A={after_rec["A"]!r}  B={after_rec["B"]!r}']
+        for tag, (_, record, debug) in (
+            ("BEFORE", runs["heatmap_peak"]), ("AFTER ", runs["crop_cos"]),
+        ):
+            sel = debug["candidates"][record["selected"]]["box"]
+            table = "  ".join(
+                f'c{_index_in(every, debug["candidates"][sc["i"]])}'
+                f'={sc["final"]:.3f}'
+                + ("*" if sc["i"] == record["selected"] else "")
+                for sc in record["scores"]
+            )
+            lines.append(
+                f'  {tag}  B by {record["B_mode"]:<12s} at x={record["B_peak"][0]:.3f}'
+                f'   excluded {record["b_excluded"]}'
+                f'   final: {table}'
+                f'   -> selected x={(sel[0] + sel[2]) / 2:.3f}'
+            )
+        v_b, w_b = waypoint_to_velocity(before_wp)
+        v_a, w_a = waypoint_to_velocity(after_wp)
+        lines.append(
+            f'  rover command  BEFORE v={v_b:.3f} w={w_b:+.3f}'
+            f'    AFTER v={v_a:.3f} w={w_a:+.3f}'
+            f'    endpoint lateral {float(after_wp[7, 1] * REF_WAYPOINT_SPACING):+.3f} m'
+        )
+        wrap(draw, "\n".join(lines), 8, top + P + 8, 320)
+
+    canvas.save(out_path)
+    for prompt, runs in rows:
+        print(f'\nprompt: {prompt}')
+        for tag, (_, record, debug) in (
+            ("BEFORE", runs["heatmap_peak"]), ("AFTER ", runs["crop_cos"]),
+        ):
+            sel = debug["candidates"][record["selected"]]["box"]
+            print(
+                f'  {tag}  B by {record["B_mode"]:<12s}'
+                f' at ({record["B_peak"][0]:.3f}, {record["B_peak"][1]:.3f})'
+                f'  excluded={record["b_excluded"]}'
+                f'  -> selected x={(sel[0] + sel[2]) / 2:.3f}'
+            )
+    print(f'\nsaved: {out_path}')
+    return out_path
+
+
 def render(image_path, prompt, out_path, device="cuda:0", panel_px=420):
     heat_rgb, panel_heat, panel_left, panel_traj, wrap = _reference_drawing()
 
@@ -308,7 +489,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", help="a single frame, e.g. test.jpg")
     parser.add_argument(
-        "--prompt", required=True, help='e.g. "the black chair next to the orange chair"'
+        "--prompt",
+        required=True,
+        action="append",
+        help='e.g. "the black chair next to the orange chair". Repeatable with '
+             "--anchor-compare, which draws one row per prompt.",
     )
     parser.add_argument("--out", default=None, help="output PNG")
     parser.add_argument("--device", default="cuda:0")
@@ -318,13 +503,22 @@ def main(argv=None):
         action="store_true",
         help="the two scoring paths side by side instead of the full pipeline",
     )
+    parser.add_argument(
+        "--anchor-compare",
+        action="store_true",
+        help="the two ways of placing the anchor side by side (D164)",
+    )
     args = parser.parse_args(argv)
 
     out = args.out or os.path.splitext(os.path.basename(args.image))[0] + "_pipeline.png"
-    if args.compare:
-        render_compare(args.image, args.prompt, out, args.device, args.panel_px)
+    if args.anchor_compare:
+        render_anchor_compare(
+            args.image, args.prompt, out, args.device, args.panel_px
+        )
+    elif args.compare:
+        render_compare(args.image, args.prompt[0], out, args.device, args.panel_px)
     else:
-        render(args.image, args.prompt, out, args.device, args.panel_px)
+        render(args.image, args.prompt[0], out, args.device, args.panel_px)
     return 0
 
 
