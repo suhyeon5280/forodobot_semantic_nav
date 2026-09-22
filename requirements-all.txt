@@ -1,0 +1,38 @@
+# Everything both processes need, in one pip install, into a fresh environment.
+#
+#   conda create -n <name> python=3.11 git -c conda-forge -y
+#   conda activate <name>
+#   pip install -r requirements-all.txt
+#   python -m playwright install chromium
+#
+# <name> is yours to pick. Nothing in this repository depends on the
+# environment being called "rover" -- environment.yml names it that, but no
+# code reads the name. Choose a new one rather than installing this on top of
+# an environment built for something else: the server list below is pinned
+# (numpy==1.26.4, opencv-python-headless==4.9.0.80) to match the upstream SDK,
+# and those pins will downgrade numpy under an existing torch.
+#
+# This file only aggregates. The two lists stay where they are because each
+# has a second consumer:
+#
+#   requirements.txt         the Dockerfile's only install, and kept identical
+#                            to frodobots-org/earth-rovers-sdk
+#   policy/requirements.txt  run on its own to top up an older environment
+#                            after models/omni_deps changes (see the README)
+#
+# Not installable from here, by design:
+#
+#   models/omni_deps   ultralytics and open_clip. Installed --no-deps so they
+#                      cannot pull their own torch over this one, so they are
+#                      carried as a directory, not a requirement. The README
+#                      section on putting the models in place has the copy.
+#   chromium           a browser, not a package: python -m playwright install
+
+-r requirements.txt
+-r policy/requirements.txt
+
+# upload_to_hf.py, which uploads a recorded session to the Hub as a dataset.
+# policy/requirements.txt already carries huggingface-hub, but for a different
+# reason -- it is how open_clip fetches the ViT-B/16 backbone -- so this tool
+# is listed separately rather than relying on that.
+huggingface-hub

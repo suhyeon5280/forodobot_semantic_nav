@@ -58,7 +58,7 @@ Earth Rover가 스스로 주행합니다. **웹페이지에 목적지를 글로 
 git clone https://github.com/suhyeon5280/forodobot_semantic_nav.git
 cd forodobot_semantic_nav
 
-conda env create -f environment.yml              # rover (Python 3.11)
+conda env create -f environment.yml -n rover     # 이름은 아무거나. 이미 있으면 다른 이름으로
 conda activate rover
 python -m playwright install chromium            # 빼먹으면 브라우저가 안 뜹니다
 cp .env.sample .env && vi .env                   # SDK_API_TOKEN, BOT_SLUG 채우기
@@ -202,14 +202,51 @@ conda --version        # 다시 확인
 
 ### 1. conda 환경 만들기
 
-**환경은 하나면 됩니다.** 서버와 모델이 같이 들어갑니다.
+**환경은 하나면 됩니다.** 서버와 모델이 같이 들어갑니다. 그리고 **이름은 아무거나 됩니다** —
+코드 어디에서도 환경 이름을 읽지 않습니다. `environment.yml`에 `rover`라고 적혀 있는 건
+기본값일 뿐입니다.
 
 ```bash
-conda env create -f environment.yml     # rover (Python 3.11)
+conda env create -f environment.yml -n rover     # 이름은 원하는 대로
 conda activate rover
 ```
 
+`-n`이 `environment.yml` 안의 이름을 덮어씁니다. 이미 같은 이름의 환경이 있으면
+`conda env create`는 **`prefix already exists`로 멈춥니다.** 그럴 땐 `-n rover2`처럼 다른
+이름을 주세요. 기존 환경은 건드리지 않습니다.
+
 프롬프트가 `(rover)`로 바뀝니다. torch, CLIP, EfficientNet을 받느라 몇 GB, 몇 분 걸립니다.
+
+#### `environment.yml` 없이 깔려면
+
+conda 환경을 직접 만들고 싶으면 [requirements-all.txt](requirements-all.txt) 하나로
+끝납니다. `environment.yml`과 같은 것을 깔고, 파일 안의 이름에 묶이지 않습니다.
+
+```bash
+conda create -n rover python=3.11 git -c conda-forge -y
+conda activate rover
+pip install -r requirements-all.txt
+```
+
+#### requirements 파일이 왜 세 개인가
+
+| 파일 | 무엇 | 누가 또 쓰나 |
+|---|---|---|
+| [requirements.txt](requirements.txt) | SDK 서버 | [Dockerfile](Dockerfile)이 이것만 깝니다. 공식 레포와 동일하게 유지 |
+| [policy/requirements.txt](policy/requirements.txt) | 모델 프로세스 | `models/omni_deps`를 갈아끼운 뒤 이것만 따로 돌립니다 |
+| [requirements-all.txt](requirements-all.txt) | 위 둘 + `upload_to_hf.py` | 새 환경에 한 번에 깔 때 |
+
+**기존 환경에 얹지 마세요.** 루트 `requirements.txt`는 공식 레포에 맞추느라
+`numpy==1.26.4`와 `opencv-python-headless==4.9.0.80`이 **고정**돼 있습니다. 이미 torch가
+깔린 다른 환경에 얹으면 numpy가 다운그레이드되면서 그 환경의 torch가 깨집니다. 새로
+파는 게 맞습니다. (그 둘은 이 포크의 서버 코드가 import 하지도 않습니다 — 공식
+레포에서 그대로 물려받은 것입니다.)
+
+**pip으로 안 깔리는 게 두 개** 있습니다. 둘 다 일부러 그렇게 둔 것입니다.
+
+- `models/omni_deps` (ultralytics, open_clip) — `--no-deps`로 깔린 것이라 폴더째 복사합니다.
+  이유는 [아래](#omni_deps는-pip로-설치하지-마세요). 넣는 방법은 [2. 모델 넣기](#2-모델-넣기).
+- Chromium — 패키지가 아니라 브라우저입니다. 바로 아래 줄.
 
 그 다음 **헤드리스 브라우저를 받습니다. 이 줄을 빼먹으면 서버가 브라우저를 못 띄웁니다:**
 
@@ -235,11 +272,12 @@ CUDA 전용이라 CPU로는 아예 못 돕니다.** torch는 일부러 conda 패
 conda-forge의 pytorch는 한 발 늦어서, 구버전이 깔리면 첫 추론에서 `no kernel image`
 에러가 납니다.
 
-환경을 고쳐 만들려면:
+환경을 고쳐 만들려면 (`rover` 자리에 실제 쓴 이름을 넣으세요):
 
 ```bash
-conda env update -f environment.yml --prune   # yml 변경분만 반영
-conda env remove -n rover                     # 통째로 지우고 다시 create
+conda env update -f environment.yml -n rover --prune   # yml 변경분만 반영
+pip install -r requirements-all.txt                    # requirements만 바뀌었을 때
+conda env remove -n rover                              # 통째로 지우고 다시 create
 ```
 
 ### 2. 모델 넣기
@@ -506,7 +544,7 @@ cd ~/forodobot_semantic_nav
 git pull
 
 conda activate rover
-conda env update -f environment.yml --prune     # requirements가 바뀌었을 때
+conda env update -f environment.yml -n rover --prune   # requirements가 바뀌었을 때 (이름은 실제 쓰는 것으로)
 python -m playwright install chromium           # 브라우저가 아직 없다면
 ```
 
@@ -560,7 +598,7 @@ sed -i 's/^CHROME_EXECUTABLE_PATH=/# CHROME_EXECUTABLE_PATH=/' .env
 > ```bash
 > conda env remove -n rover-sdk
 > conda env remove -n rover-policy
-> conda env create -f environment.yml
+> conda env create -f environment.yml -n rover
 > conda activate rover
 > python -m playwright install chromium
 > ```
@@ -1005,6 +1043,9 @@ CLIP의 77토큰을 넘으면 조용히 잘립니다.
 | 영상이 검게만 나옴 | Playwright 번들 Chromium에는 H.264 코덱이 없습니다. Google Chrome을 설치하거나 `.env`의 `CHROME_EXECUTABLE_PATH`로 지정하세요 |
 | `conda: command not found` | `conda init bash` 후 터미널을 새로 안 열었거나 conda 미설치 → [0단계](#0-conda-설치-확인) |
 | `CondaError: Run 'conda init' before 'conda activate'` | 같은 원인. 새 터미널을 열거나 `source ~/.bashrc` |
+| `CondaValueError: prefix already exists` | 같은 이름의 환경이 이미 있습니다. `-n 다른이름`을 주세요 — 이름은 아무거나 되고 기존 환경은 그대로 남습니다 → [1단계](#1-conda-환경-만들기) |
+| `requirements-all.txt`를 깔았는데 `ultralytics` / `open_clip` 없음 | 그 둘은 일부러 pip으로 안 깝니다. `models/omni_deps`를 복사하세요 → [omni_deps](#omni_deps는-pip로-설치하지-마세요) |
+| 기존 환경에 깔았더니 torch가 깨짐 | 루트 `requirements.txt`의 `numpy==1.26.4`가 numpy를 다운그레이드한 것. 이 포크는 **새 환경**을 전제로 합니다 → [1단계](#1-conda-환경-만들기) |
 | `conda env create`가 CLIP에서 실패 | 환경에 git이 없음(`environment.yml`이 깔아줍니다). 사내망이면 `git+https://` 접근 여부부터 확인 |
 | `torch.cuda.is_available()`이 `False` | NVIDIA 드라이버(`nvidia-smi`) 확인 후 torch 재설치. **CPU로는 못 돕니다** |
 | 레포 폴더에서만 `python`이 이상하게 동작 | pyenv를 쓰는 경우, 레포의 `.python-version`(`venv39`)이 conda보다 먼저 잡힙니다. 그 파일을 지우거나 pyenv를 끄세요 |
@@ -1132,7 +1173,8 @@ clip하고 회전 반경을 보존하는 리미터를 0.3 m/s, 0.3 rad/s에 겁�
 | `models/` | 가중치. 빈 폴더로 커밋되고 내용은 gitignore → [모델 넣기](#2-모델-넣기) |
 | `field_log/` | tick 로그와 heatmap 썸네일. gitignore |
 | [static/autonomy_control.html](static/autonomy_control.html) | 조작 페이지 (SDK 서버가 서빙) |
-| [environment.yml](environment.yml) | `rover` conda 환경 하나 (Python 3.11 + [requirements.txt](requirements.txt) + [policy/requirements.txt](policy/requirements.txt)) |
+| [environment.yml](environment.yml) | conda 환경 하나 (Python 3.11 + [requirements.txt](requirements.txt) + [policy/requirements.txt](policy/requirements.txt)). 이름 기본값은 `rover`, `-n`으로 덮어씁니다 |
+| [requirements-all.txt](requirements-all.txt) | 위 둘 + `upload_to_hf.py`를 한 번에. conda 파일 없이 새 환경에 깔 때 → [1단계](#1-conda-환경-만들기) |
 | `policy/calibration.json` | 측정된 속도 상수. 페이지가 생성, gitignore됨 |
 
 `main.py`를 비롯한 SDK 서버 코드는 수정하지 않았습니다. 예외는
