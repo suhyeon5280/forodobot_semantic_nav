@@ -55,6 +55,12 @@ REF_PROMPTS = (
     "the red truck next to the white van",
 )
 TOLERANCE_M = 0.01
+
+# `_crop_embeddings` is `crop_cos` split in two, so the anchor can be scored
+# against the crops the target already paid for. The two must keep agreeing to
+# floating-point noise; anything larger means the split has drifted from the
+# reference and the adapter is no longer being read the way it was measured.
+CROP_DRIFT_TOL = 1e-5
 LOOP_BUDGET_MS = 1000.0 * DT
 
 
@@ -152,7 +158,10 @@ def check_port(device, tick_log=None):
             f"    dets={record['n_dets']} cands={record['n_candidates']}"
             f" relaxed={record['relaxed']} synthetic={record['synthetic_candidate']}"
         )
-        print(f"    B peak={record['B_peak']}  selected=c{record['selected']}")
+        print(
+            f"    B by {record['B_mode']}  at {record['B_peak']}"
+            f"  excluded={record['b_excluded']}  selected=c{record['selected']}"
+        )
         print(
             "    scores: "
             + " | ".join(
@@ -170,6 +179,25 @@ def check_port(device, tick_log=None):
             f"    deployment scale (index {WAYPOINT_INDEX}, {METRIC_WAYPOINT_SPACING} m):"
             f" v={v:.3f} m/s w={w:+.3f} rad/s -> linear={linear:+.3f} angular={angular:+.3f}"
         )
+        candidates = policy.last_debug["candidates"]
+        if record["score_mode"] == "crop_cos" and candidates:
+            direct, _ = policy.heatmap.crop_cos(
+                frames[-1].convert("RGB"),
+                [c["box"] for c in candidates],
+                record["A"],
+                policy.crop_margin,
+                policy.score_template,
+            )
+            drift = max(
+                abs(a - s["score"])
+                for a, s in zip(direct, record["scores"])
+            )
+            drifted = drift > CROP_DRIFT_TOL
+            ok = ok and not drifted
+            print(
+                f"    crop split: max|_crop_embeddings - crop_cos|"
+                f" = {drift:.2e}   {'FAIL' if drifted else 'OK'}"
+            )
     print(f"\n  {'PASS' if ok else 'FAIL'}: port reproduces the reference")
     return ok
 

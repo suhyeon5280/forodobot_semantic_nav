@@ -30,8 +30,7 @@ time, and the layout is what keeps that working.
 Runtime: an environment with torch, plus `models/omni_deps` for ultralytics and
 open_clip. This module puts both on sys.path itself, so PYTHONPATH is optional.
 
-Two divergences from `run_autonomy_ours.py`, both requested and both outside the
-path the validation frame exercises (see `check_ours.py`):
+Three divergences from `run_autonomy_ours.py`, all requested:
 
   * no candidate survives detection -> upstream falls back to the arm-1 model.
     Here a single synthetic candidate box is placed on the A heatmap peak
@@ -39,6 +38,18 @@ path the validation frame exercises (see `check_ours.py`):
   * the prompt has no relation word -> upstream skips detection and feeds a
     whole-frame heatmap. Here A becomes the whole sentence, B is None, and
     detection plus selection still run with the distance term dropped.
+  * B is placed on a detector box scored by crop cosine, not on the B heatmap's
+    peak (D164). The reference measures the distance term to that peak and uses
+    a box only to decide what to exclude; both come off the same box here. The
+    peak grounds the noun and cannot read the adjective, so a frame of four
+    chairs puts it on whichever chair and the distance term then measures from
+    the wrong one. `anchor_mode="heatmap_peak"` restores the reference's
+    behaviour, and is still the automatic fallback for a B the detector cannot
+    box at all.
+
+D157 (2), the exclusion of B's own box from the A candidates, is in the
+reference and was missing here until D164. Without it B competes as an A at
+distance zero from itself, which is the largest bonus the rule can give.
 """
 
 import contextlib
@@ -320,6 +331,21 @@ class OursPolicy:
         self.score_mode = e2e.get("score_mode", "crop_cos")
         self.crop_margin = float(e2e.get("crop_margin", 0.10))
         self.score_template = e2e.get("score_template", "a photo of a {}.")
+        # How the anchor -- the "B" of "A next to B" -- is placed.
+        #   crop_cos      score the detector's boxes for the anchor phrase the
+        #                 same way the target's are scored, and take the best
+        #                 box's centre. Reads the adjective, so it can tell the
+        #                 black chair from the three orange ones.
+        #   heatmap_peak  the brightest patch of the anchor's heatmap. That
+        #                 runs through the localization head, which grounds the
+        #                 noun only, so with four chairs in frame it lands on
+        #                 whichever chair. Kept as the fallback for an anchor
+        #                 the detector cannot box, and as the way back to the
+        #                 pre-D164 behaviour for an A/B run.
+        #
+        # Selecting the anchor's box is also what makes it excludable from the
+        # target's candidates, so this one switch moves both.
+        self.anchor_mode = e2e.get("anchor_mode", "crop_cos")
         model_kwargs = {
             key: integration["model"][key]
             for key in (
@@ -343,10 +369,11 @@ class OursPolicy:
         with _refs_cwd():
             from build_eval_sets import lemma
             from experiments.context_score import box_mask, patch_coords
-            from d150_e2e import head_of, match_coco_phrase
+            from d150_e2e import head_of, iou, match_coco_phrase
 
         self._lemma = lemma
         self._box_mask = box_mask
+        self._iou = iou
         self._head_of = head_of
         self._match_coco_phrase = match_coco_phrase
         self.patch_xy = patch_coords(PATCH_GRID)
@@ -459,7 +486,16 @@ class OursPolicy:
             ArmModel.MASK_P = 0.0  # training-time RGB dropout; we mask explicitly
 
             with _refs_cwd():
-                from heatmap import HeatmapProducer
+                from heatmap import (
+                    HeatmapProducer,
+                    _clip_patch_forward,
+                    l2_normalize,
+                )
+
+            # `crop_cos`'s own building blocks, so `_crop_embeddings` below is
+            # that method's arithmetic rather than a second copy of it.
+            self._clip_patch_forward = _clip_patch_forward
+            self._l2_normalize = l2_normalize
 
             self.heatmap = (
                 HeatmapProducer(
@@ -571,6 +607,60 @@ class OursPolicy:
             align_corners=False,
         )
 
+    def _crop_embeddings(self, frame, boxes):
+        """The adapter's pooled embedding for each box, in one forward pass.
+
+        This is the first half of `HeatmapProducer.crop_cos`. That method does
+        the crop, the forward and the text cosine in one call and returns only
+        the scalars, so scoring a second phrase against the same crops through
+        it would embed every crop a second time. Keeping the vectors lets the
+        target and the anchor be scored on one pass.
+
+        The steps and their order are the reference's own -- its `preprocess`,
+        its `_clip_patch_forward`, its `l2_normalize` -- so this stays the path
+        the adapter's accuracy was measured on. `check_ours` asserts the
+        cosines taken from these vectors match `crop_cos`'s own numbers.
+        """
+        import torch
+
+        width, height = frame.size
+        pixels = []
+        for box in boxes:
+            x0, y0, x1, y1 = box
+            mx, my = (x1 - x0) * self.crop_margin, (y1 - y0) * self.crop_margin
+            crop = frame.crop(
+                (
+                    int(max(0.0, x0 - mx) * width),
+                    int(max(0.0, y0 - my) * height),
+                    int(min(1.0, x1 + mx) * width),
+                    int(min(1.0, y1 + my) * height),
+                )
+            )
+            if min(crop.size) < 8:
+                crop = frame
+            pixels.append(self.heatmap.preprocess(crop))
+        if not pixels:
+            return None
+        with torch.no_grad():
+            patches, _ = self._clip_patch_forward(
+                self.heatmap.clip.visual,
+                torch.stack(pixels).to(self.device),
+                maskclip=False,
+            )
+            return self._l2_normalize(self._l2_normalize(patches).mean(1))
+
+    def _phrase_vector(self, phrase: str):
+        """`phrase` under the score template, as a unit text embedding."""
+        import torch
+
+        text = self.score_template.format(phrase)
+        with torch.no_grad():
+            tokens = self.heatmap.tokenizer([text]).to(self.device)
+            vector = self._l2_normalize(
+                self.heatmap.clip.encode_text(tokens).float()
+            )[0]
+        return vector, text
+
     def _detect(self, frame) -> List[dict]:
         """YOLOv8n boxes in normalized xyxy, highest confidence first."""
         image = np.array(frame.convert("RGB"))[:, :, ::-1]  # PIL RGB -> BGR
@@ -661,7 +751,11 @@ class OursPolicy:
             "synthetic_candidate": False,
             "selected": None,
             "scores": [],
+            "fallback": None,
             "B_peak": None,
+            "B_box": None,
+            "B_mode": None,
+            "b_excluded": 0,
         }
         timing["pack"] = time.time() - started
 
@@ -719,18 +813,10 @@ class OursPolicy:
             candidates = list(detections)
             record["relaxed"] = True
 
-        # (3) attribute score per candidate, from the target phrase.
+        # (3) the target heatmap, which builds the 4th channel either way.
         step = time.time()
         grid_target = self._grid(current_img, target)
-        grid_anchor = self._grid(current_img, anchor) if anchor else None
         timing["clip"] = time.time() - step
-
-        peak = None
-        if grid_anchor is not None:
-            peak = tuple(
-                float(v) for v in self.patch_xy[int(np.argmax(grid_anchor))]
-            )
-            record["B_peak"] = list(peak)
 
         if not candidates:
             # Divergence from the reference, which would run arm-1 here: place
@@ -748,27 +834,128 @@ class OursPolicy:
             ]
             record["synthetic_candidate"] = True
             record["fallback"] = "zero_candidates_peak_box"
-        record["n_candidates"] = len(candidates)
 
-        # (4) attribute score per candidate. crop_cos crops the box out of the
-        # full-resolution frame and embeds it with the adapter, which is the
-        # path the adapter's accuracy was measured on and the only one that
-        # reads the adjective. The heatmap's in-box max is computed either way
-        # and logged next to it, because it is what earlier runs selected on.
+        # (4a) crop every box once. A crop is cut out of the full-resolution
+        # frame and embedded with the adapter, which is the path the adapter's
+        # accuracy was measured on and the only one that reads the adjective.
+        # The heatmap's in-box max is computed either way and logged next to
+        # it, because it is what earlier runs selected on.
+        #
+        # The anchor's detections are gathered first so its boxes ride along in
+        # the same pass. They are filtered by the anchor's own COCO class, not
+        # the target's: "the orange chair next to the table" grounds the anchor
+        # on tables. When the two share a class -- which is when the relation
+        # is doing the work -- the lists coincide and the anchor is scored
+        # against the target's own crop vectors, at no extra forward pass.
         step = time.time()
+        anchor_pool = []
+        if anchor and not record["synthetic_candidate"]:
+            anchor_head, anchor_want = self._coco_class_for(anchor)
+            record["B_head"] = anchor_head
+            if anchor_want:
+                anchor_pool = [
+                    d
+                    for d in detections
+                    if self._lemma(d["cat"]) == self._lemma(anchor_want)
+                ]
+
+        box_list = [c["box"] for c in candidates]
+        anchor_rows = []
+        for detection in anchor_pool:
+            for i, candidate in enumerate(candidates):
+                if candidate is detection:
+                    anchor_rows.append(i)
+                    break
+            else:
+                anchor_rows.append(len(box_list))
+                box_list.append(detection["box"])
+
+        vectors = None
         crop_scores = None
         crop_text = ""
         if self.score_mode == "crop_cos":
-            crop_scores, crop_text = self.heatmap.crop_cos(
-                frames[-1].convert("RGB"),
-                [c["box"] for c in candidates],
-                target,
-                self.crop_margin,
-                self.score_template,
-            )
+            vectors = self._crop_embeddings(frames[-1].convert("RGB"), box_list)
+        if vectors is not None:
+            target_vector, crop_text = self._phrase_vector(target)
+            crop_scores = [
+                float(v) for v in (vectors[: len(candidates)] @ target_vector)
+            ]
         timing["score"] = time.time() - step
         record["score_mode"] = self.score_mode
         record["crop_text"] = crop_text
+
+        # (4b) where the anchor is. The same crop cosine as the target, so the
+        # adjective is read. The heatmap path this replaces runs through the
+        # localization head, which grounds the noun and nothing else: with four
+        # chairs in frame its peak lands on whichever chair reads as most
+        # chair-like, not on the black one. The heatmap stays as the fallback
+        # for an anchor the detector cannot box at all -- a tree, a doorway,
+        # anything off COCO -- where a box-based score has nothing to score.
+        step = time.time()
+        peak = None
+        anchor_box = None
+        grid_anchor = None
+        if anchor:
+            if (
+                self.anchor_mode == "crop_cos"
+                and vectors is not None
+                and anchor_rows
+            ):
+                anchor_vector, anchor_text = self._phrase_vector(anchor)
+                anchor_scores = [
+                    float(vectors[row] @ anchor_vector) for row in anchor_rows
+                ]
+                best = int(np.argmax(anchor_scores))
+                anchor_box = list(anchor_pool[best]["box"])
+                peak = _center(anchor_box)
+                record["B_mode"] = "crop_cos"
+                record["B_text"] = anchor_text
+                record["B_scores"] = anchor_scores
+                record["B_cat"] = anchor_pool[best]["cat"]
+            else:
+                grid_anchor = self._grid(current_img, anchor)
+                peak = tuple(
+                    float(v) for v in self.patch_xy[int(np.argmax(grid_anchor))]
+                )
+                record["B_mode"] = "heatmap_peak"
+                if record["fallback"] is None and self.anchor_mode == "crop_cos":
+                    # Asked for the box path and did not get it, which is the
+                    # anchor being off COCO or undetected. Worth a mark in the
+                    # log; falling back is not, when it was configured.
+                    record["fallback"] = "anchor_not_boxed"
+            record["B_peak"] = list(peak)
+            record["B_box"] = anchor_box
+        timing["anchor"] = time.time() - step
+
+        # (4c) take the anchor's own box out of the target's candidates.
+        # Without this the anchor competes as a target while sitting at
+        # distance zero from itself, so the distance term hands it the largest
+        # bonus on offer and a wrong-coloured box can win on that alone.
+        # Overlap rather than identity, because the two lists are filtered
+        # separately. Ported from the reference's D157 (2).
+        candidates_all = candidates
+        excluded = []
+        if anchor_box is not None:
+            keep = [
+                i
+                for i, candidate in enumerate(candidates)
+                if self._iou(candidate["box"], anchor_box) <= 0.5
+            ]
+            excluded = [i for i in range(len(candidates)) if i not in keep]
+            if keep and excluded:
+                candidates = [candidates[i] for i in keep]
+                if crop_scores is not None:
+                    crop_scores = [crop_scores[i] for i in keep]
+            elif excluded:
+                # Every candidate overlapped the anchor, which is what "the
+                # chair next to the chair" looks like on a single box. The
+                # reference calls that a failed frame; the field loop has to
+                # return a trajectory, so the exclusion is dropped here and the
+                # tick is marked instead.
+                excluded = []
+                record["fallback"] = record["fallback"] or "b_exclusion_empty"
+        record["b_excluded"] = len(excluded)
+        record["n_candidates"] = len(candidates)
 
         # (5) selection. The distance term is dropped when there is no anchor.
         step = time.time()
@@ -809,6 +996,12 @@ class OursPolicy:
         self.last_debug = {
             "detections": detections,
             "candidates": candidates,
+            # Before the anchor's box was taken out, so a picture can show what
+            # was dropped rather than just not drawing it.
+            "candidates_all": candidates_all,
+            "excluded": excluded,
+            "anchor_box": anchor_box,
+            "anchor_pool": anchor_pool,
             "grid_target": grid_target,
             "grid_anchor": grid_anchor,
             "peak": peak,

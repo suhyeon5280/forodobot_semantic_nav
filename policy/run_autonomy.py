@@ -598,6 +598,15 @@ def parse_args(argv=None) -> argparse.Namespace:
         default=None,
         help="directory for ticks.jsonl and heatmap thumbnails (arm-4'/arm-1)",
     )
+    which.add_argument(
+        "--anchor-mode",
+        choices=("crop_cos", "heatmap_peak"),
+        default=None,
+        help="how to place B of 'A next to B'. crop_cos (the default) scores "
+             "the detector's boxes for the anchor phrase, which reads the "
+             "adjective; heatmap_peak is the pre-D164 behaviour and the way "
+             "back if the field run misbehaves",
+    )
 
     goal = parser.add_argument_group(
         "goal (all optional — the instruction is normally typed in the UI)"
@@ -711,6 +720,9 @@ def main(argv=None) -> int:
             arm1_only=args.arm1,
             tick_log=args.tick_log or DEFAULT_TICK_LOG,
         )
+        if args.anchor_mode and not args.arm1:
+            policy.anchor_mode = args.anchor_mode
+            logger.info("anchor placed by %s", args.anchor_mode)
         if policy.CONTEXT_LEN != CONTEXT_LEN:
             logger.error(
                 "context length mismatch: the loop buffers %d frames but the "
