@@ -492,7 +492,8 @@ python -m policy.check_ours
 1. **regression** — `--upstream` 경로(`best.pth`)가 여전히 도는지. `best.pth`는 릴리스
    첨부 파일이라 clone에는 없습니다. **없으면 `SKIP`이고 실패가 아닙니다.**
 2. **port** — 지정 프레임에서 어순을 바꾼 두 문장이 **오프라인 참조와 ±0.01 m 안에서**
-   맞는지. 전처리가 한 군데라도 틀어지면 여기서 잡힙니다.
+   맞는지. 전처리가 한 군데라도 틀어지면 여기서 잡힙니다. 같은 단계에서 후보 점수가
+   참조의 `crop_cos` 와 소수점 오차 안에서 같은지도 대조합니다.
 3. **timing** — tick 시간이 333 ms 예산 안인지.
 
 정상이면 마지막에 이렇게 나옵니다.
@@ -787,9 +788,20 @@ python -m policy.run_autonomy --upstream --ckpt best.pth   # 원래 모델
    못합니다. 이전 구현은 헤드 heatmap의 박스 내 최대값을 점수로 썼고, 그래서
    "black chair"와 "orange chair"가 같은 의자를 골랐습니다. 그 값은 지금도
    `heat_max`로 로그에 같이 남습니다.
-4. 같은 CLIP + 국소화 헤드로 B 문구의 heatmap 피크를 찾습니다. B가 없으면 건너뜁니다.
-5. `argmax_k [점수_k − 0.25 · 피크까지의 거리]`로 하나를 고릅니다. B가 없으면 점수만
-   봅니다.
+4. B도 **3번과 같은 방식**으로 찾습니다. 검출 박스를 각각 잘라 B 문구와 코사인
+   유사도를 내고, 가장 높은 박스의 **중심**을 기준 위치로 씁니다. 박스는 B 자신의
+   COCO 클래스로 걸러냅니다 — "the orange chair next to the table"이면 table
+   박스에서 찾습니다. A와 같은 클래스면 3번에서 만든 crop 벡터를 그대로
+   쓰므로 forward가 늘지 않습니다. B가 없으면 건너뜁니다.
+
+   B가 COCO 밖이면(나무, 문, 표지판) 박스가 없으므로 **예전 방식인 heatmap
+   피크로 돌아갑니다.** 그 heatmap은 국소화 헤드를 지나서 명사만 보고 색을 못
+   읽습니다. 의자가 여럿이면 아무 의자에나 꽂힐 수 있어서, tick 로그에
+   `B_mode: "heatmap_peak"` 와 `fallback: "anchor_not_boxed"` 로 남습니다.
+5. **B 박스와 IoU 0.5를 넘게 겹치는 A 후보를 뺀 다음**,
+   `argmax_k [점수_k − 0.25 · 기준까지의 거리]`로 하나를 고릅니다. B를 빼지 않으면
+   B 자신이 A 후보로 남아 **자기와의 거리 0**이라 규칙이 줄 수 있는 최대 가점을
+   가져갑니다. B가 없으면 점수만 봅니다.
 6. 선택한 박스 안만 남긴 heatmap을 224×224 1채널로 만듭니다.
 7. **`current_img`의 RGB 3채널을 0으로 채우고** heatmap을 4번째 채널로 붙입니다.
    정규화 공간의 0은 데이터셋 평균입니다. 이 마스킹이 빠지면 정책이 heatmap을 무시합니다.
@@ -831,6 +843,17 @@ python -m policy.visualize_pipeline test.jpg \
 
 `--compare`를 주면 점수 경로 두 가지(`heat_max`와 `crop_cos`)가 같은 프레임에서
 각각 어느 박스를 고르는지 나란히 그립니다.
+
+`--anchor-compare`는 **기준 물체(B) 를 찾는 두 방식**을 나란히 놓습니다. `--prompt`를
+여러 번 주면 프롬프트당 한 줄씩 그려서 **어순을 바꾼 문장을 같은 장에서** 비교할 수
+있습니다. 현장 나가기 전 로버 카메라로 찍은 프레임으로 한 번 돌려보기를 권합니다.
+
+```bash
+python -m policy.visualize_pipeline test.jpg --anchor-compare \
+  --prompt "the orange chair next to the black chair" \
+  --prompt "the black chair next to the orange chair" \
+  --out viz/anchor.png
+```
 
 ### 눈금이 두 개입니다
 
@@ -1065,6 +1088,7 @@ CLIP의 77토큰을 넘으면 조용히 잘립니다.
 | `--arm1` | 꺼짐 | 파인튜닝 전 원본. 현장 A/B 대조군 |
 | `--upstream` | 꺼짐 | 레포에 원래 있던 OmniVLA-edge |
 | `--tick-log` | `field_log/` | tick 로그와 heatmap 썸네일 |
+| `--anchor-mode` | `crop_cos` | 기준 물체(B) 를 어떻게 찾는지. `heatmap_peak` 은 이전 동작입니다 — 현장에서 이상하면 되돌리는 용도 |
 
 **기본**
 
