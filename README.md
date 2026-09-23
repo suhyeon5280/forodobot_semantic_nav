@@ -37,10 +37,8 @@ cp .env.sample .env && vi .env                 # SDK_API_TOKEN, BOT_SLUG 채우�
 > ⚠️ 옆 폴더 `arm1p_s0`는 **3채널**이라 넣으면 `size mismatch` 로 죽습니다. arm4**p**\_s0 의
 > **latest**.pth 입니다 — `best.pth` 도 다른 파일입니다.
 
-```bash
-sha256sum models/arm4p_s0_latest.pth | cut -c1-16   # 6bc0b5da318d4dd1 이어야 정상
-python -m policy.check_ours                         # 로봇 없이 점검. PASS 나와야 함
-```
+다 넣었으면 `python -m policy.check_ours` 로 설치가 끝났는지 확인합니다. 로봇도 서버도
+없이 돕니다. → [오프라인 점검](#4-오프라인-점검)
 
 ### 2. 실행 — 매번
 
@@ -58,10 +56,6 @@ python -m policy.run_autonomy --dry-run   # 첫 주행은 반드시 --dry-run
 조작은 전부 웹에서 하고 **터미널은 다시 건드리지 않습니다.**
 
 막히면 → [문제 해결](#문제-해결) · [모델 넣기](#2-모델-넣기) · [첫 주행](#첫-주행)
-
-> **이미 clone 해둔 게 있으면** `git pull` 뒤에 `.env`를 손봐야 합니다. `.env`는 레포에
-> 없는 파일이라 pull이 고쳐주지 않고, `MISSION_SLUG`가 남아 있으면 모든 엔드포인트가
-> 400을 뱉습니다. → [업데이트 받기](#업데이트-받기)
 
 ---
 
