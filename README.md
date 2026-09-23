@@ -900,7 +900,7 @@ python -m policy.visualize_pipeline test.jpg --anchor-compare \
 ```bash
 cd ~/forodobot_semantic_nav
 conda activate rover
-python -m policy.run_autonomy --ckpt best.pth --dry-run
+python -m policy.run_autonomy --dry-run
 ```
 
 프레임 수신 → 추론 → 궤적 → 속도 변환까지 전부 돌지만 **로봇에는 명령이 한 번도 나가지
