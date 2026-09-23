@@ -8,15 +8,72 @@ Earth Rover가 스스로 주행합니다. **웹페이지에 목적지를 글로 
 
 ---
 
+## 바로 실행
+
+**서버와 모델이 같은 컴퓨터에서 터미널 두 개로 돕니다.** conda 환경은 하나면 됩니다.
+
+### 1. 환경 설정 — 최초 1회
+
+```bash
+git clone https://github.com/suhyeon5280/forodobot_semantic_nav.git
+cd forodobot_semantic_nav
+
+conda env create -f environment.yml -n rover   # 이름은 아무거나. 있으면 다른 이름으로
+conda activate rover
+python -m playwright install chromium          # 빼먹으면 브라우저가 안 뜹니다
+cp .env.sample .env && vi .env                 # SDK_API_TOKEN, BOT_SLUG 채우기
+```
+
+**가중치는 깃에 없습니다.** `models/`에 아래 다섯 개를 **이름 그대로** 넣으세요.
+
+| `models/` 안의 이름 | 크기 | 원본 (`E=~/suhyeon/edge_vlm`) |
+|---|---|---|
+| `arm4p_s0_latest.pth` | 415M | `$E/results/phase4/omnivla/`**`arm4p_s0`**`/`**`latest`**`.pth` |
+| `act4_cl6159_s2.pt` | 55M | `$E/results/phase4/d79_ladder/act4_cl6159_s2.pt` |
+| `full_H1_linear_lr0.001_s0.pt` | 1.1M | `$E/results/phase4/loc_head_full/full_H1_linear_lr0.001_s0.pt` |
+| `yolov8n.pt` | 6.3M | `$E/yolov8n.pt` |
+| `omni_deps/` | 12M | `$E/.omni_deps` — **폴더째** 복사, pip 설치 금지 |
+
+> ⚠️ 옆 폴더 `arm1p_s0`는 **3채널**이라 넣으면 `size mismatch` 로 죽습니다. arm4**p**\_s0 의
+> **latest**.pth 입니다 — `best.pth` 도 다른 파일입니다.
+
+```bash
+sha256sum models/arm4p_s0_latest.pth | cut -c1-16   # 6bc0b5da318d4dd1 이어야 정상
+python -m policy.check_ours                         # 로봇 없이 점검. PASS 나와야 함
+```
+
+### 2. 실행 — 매번
+
+```bash
+# 터미널 1 — SDK 서버  (다른 기기에서 페이지를 열려면 --bind 0.0.0.0:8000)
+cd ~/forodobot_semantic_nav && conda activate rover
+hypercorn main:app
+
+# 터미널 2 — 모델  (새 터미널, 같은 환경)
+cd ~/forodobot_semantic_nav && conda activate rover
+python -m policy.run_autonomy --dry-run   # 첫 주행은 반드시 --dry-run
+```
+
+브라우저에서 **http://localhost:8000/static/autonomy_control.html** 를 엽니다. 그 뒤
+조작은 전부 웹에서 하고 **터미널은 다시 건드리지 않습니다.**
+
+막히면 → [문제 해결](#문제-해결) · [모델 넣기](#2-모델-넣기) · [첫 주행](#첫-주행)
+
+> **이미 clone 해둔 게 있으면** `git pull` 뒤에 `.env`를 손봐야 합니다. `.env`는 레포에
+> 없는 파일이라 pull이 고쳐주지 않고, `MISSION_SLUG`가 남아 있으면 모든 엔드포인트가
+> 400을 뱉습니다. → [업데이트 받기](#업데이트-받기)
+
+---
+
 ## 목차
 
-- [전체 흐름 한눈에](#전체-흐름-한눈에)
+- [바로 실행](#바로-실행)
 - [구조](#구조)
 - [준비물](#준비물)
 - [최초 1회 설정](#최초-1회-설정)
 - [업데이트 받기](#업데이트-받기)
 - [실행](#실행)
-- [정책 세 가지](#정책-세-가지)
+- [정책 — arm-4′](#정책--arm-4)
 - [웹페이지 사용법](#웹페이지-사용법)
 - [첫 주행](#첫-주행)
 - [⚠️ 주의사항](#️-주의사항)
@@ -29,66 +86,6 @@ Earth Rover가 스스로 주행합니다. **웹페이지에 목적지를 글로 
 - [파일 구성](#파일-구성)
 - [SDK 엔드포인트](#sdk-엔드포인트)
 - [출처](#출처)
-
----
-
-## 전체 흐름 한눈에
-
-**서버와 모델은 같은 컴퓨터 한 대**에서 터미널 두 개로 돕니다. 각 단계 설명은 아래 링크를
-따라가세요.
-
-**conda 환경은 하나(`rover`)뿐입니다.** 두 터미널 다 같은 환경을 씁니다.
-
-> ### 이미 clone 해둔 게 있으면 이 두 줄부터
->
-> ```bash
-> git pull
-> sed -i 's/^MISSION_SLUG=/# MISSION_SLUG=/' .env
-> sed -i 's/^CHROME_EXECUTABLE_PATH=/# CHROME_EXECUTABLE_PATH=/' .env
-> # 그 다음 서버 재시작
-> ```
->
-> `.env`는 레포에 없는 파일이라 **`git pull`로는 안 고쳐집니다.** `MISSION_SLUG`가
-> 남아있으면 `/`를 포함한 모든 엔드포인트가 400
-> (`Call /start-mission endpoint to start a mission`)을 뱉습니다.
-> 자세히 → [업데이트 받기](#업데이트-받기)
-
-```bash
-# ── 최초 1회 ────────────────────────────────────────────────────────────
-git clone https://github.com/suhyeon5280/forodobot_semantic_nav.git
-cd forodobot_semantic_nav
-
-conda env create -f environment.yml -n rover     # 이름은 아무거나. 이미 있으면 다른 이름으로
-conda activate rover
-python -m playwright install chromium            # 빼먹으면 브라우저가 안 뜹니다
-cp .env.sample .env && vi .env                   # SDK_API_TOKEN, BOT_SLUG 채우기
-
-# 가중치는 깃에 없습니다. models/ 가 빈 폴더로 들어있으니 거기에 복사하세요.
-ls models/                                       # README.md 하나만 보이면 정상
-#   → 넣을 파일 목록: 아래 "모델 넣기"
-
-python -m policy.check_ours                      # 로봇 없이 점검. 여기서 PASS 나와야 함
-
-# ── 매번 ────────────────────────────────────────────────────────────────
-# 터미널 1 — SDK 서버 (다른 기기에서 페이지를 열려면 --bind 0.0.0.0:8000)
-cd ~/forodobot_semantic_nav && conda activate rover
-hypercorn main:app
-
-# 터미널 2 — 모델 (새 터미널, 같은 환경)
-cd ~/forodobot_semantic_nav && conda activate rover
-python -m policy.run_autonomy --dry-run          # 첫 주행은 반드시 --dry-run
-
-# 브라우저: http://localhost:8000/static/autonomy_control.html
-```
-
-자세히: [최초 1회 설정](#최초-1회-설정) · [모델 넣기](#2-모델-넣기) · [실행](#실행) ·
-[첫 주행](#첫-주행) · [문제 해결](#문제-해결)
-
-`run_autonomy`는 기본으로 파인튜닝한 **arm-4′** 정책을 돌립니다. 레포에 원래 있던
-OmniVLA-edge로 돌리려면 `--upstream --ckpt best.pth`를 붙이세요 →
-[정책 세 가지](#정책-세-가지)
-
----
 
 ## 구조
 
@@ -354,7 +351,7 @@ scp -r ~/forodobot_semantic_nav/models/. <노트북>:~/forodobot_semantic_nav/mo
 | `full_H1_linear_lr0.001_s0.pt` | 1.1M | 국소화 헤드 | 필수 |
 | `yolov8n.pt` | 6.3M | 검출기 | 필수 |
 | `omni_deps/` | 12M | ultralytics, open_clip | 필수 |
-| `arm1_latest.pth` | 418M | 대조군 정책 (`--arm1`) | 현장 A/B에 필요 |
+| `arm1_latest.pth` | 418M | 대조군 정책 (`--arm1`) | arm-4′만 쓰면 **불필요** |
 | `frames/` | 0.5M | 점검용 프레임 | 점검에 필요 |
 | `clip/` | 338M | CLIP ViT-B/32 캐시 | 인터넷 있으면 생략 가능 |
 | `hf/` | 571M | CLIP ViT-B/16 캐시 | 인터넷 있으면 생략 가능 |
@@ -433,17 +430,6 @@ pip install -r policy/requirements.txt
 CLIP 백본 두 개는 첫 실행 때 자동으로 받아서 `~/.cache`에 넣습니다. 폴더를 복사해
 두면 그쪽을 먼저 쓰고, **네트워크를 아예 안 탑니다.** 현장에서 인터넷이 없거나 느릴
 거면 미리 복사하세요.
-
-#### `--upstream`으로 원래 모델도 쓰려면
-
-`best.pth`는 예전처럼 릴리스 첨부 파일에서 받아 **레포 루트**에 둡니다. `models/`가
-아닙니다.
-
-```bash
-curl -L -o best.pth \
-  https://github.com/minsong0206/frodobot_server/releases/download/omnivla-v1/best.pth
-ls -lh best.pth        # 415M 근처면 정상. 몇 KB면 다운로드 실패(HTML 에러 페이지)
-```
 
 ### 3. `.env` 만들기
 
@@ -678,8 +664,7 @@ python -m policy.run_autonomy
 
 **첫 주행이라면 여기서 `--dry-run`을 붙이세요** → [첫 주행](#첫-주행)
 
-이 명령은 파인튜닝한 **arm-4′**를 돌립니다. 대조군이나 원래 모델로 바꾸려면
-[정책 세 가지](#정책-세-가지)를 보세요.
+이 명령은 파인튜닝한 **arm-4′**를 돌립니다 → [정책 — arm-4′](#정책--arm-4)
 
 ### activate 없이 한 줄로 (선택)
 
@@ -740,28 +725,17 @@ python -m policy.run_autonomy
 
 ---
 
-## 정책 세 가지
+## 정책 — arm-4′
 
-같은 제어 루프 위에서 정책 세 개를 고를 수 있습니다. 루프, 웨이포인트 변환, 안전
-장치는 전부 공통이고 **정책만** 바뀝니다.
-
-| 플래그 | 정책 | 체크포인트 |
-|---|---|---|
-| (없음) | **arm-4′** — heatmap 4채널 판. 파인튜닝한 것 | `models/arm4p_s0_latest.pth` |
-| `--arm1` | **arm-1** — 파인튜닝 전 원본. 현장 A/B 대조군 | `models/arm1_latest.pth` |
-| `--upstream` | 레포에 원래 있던 OmniVLA-edge | `best.pth` (레포 루트) |
-
-환경은 셋 다 `rover` 하나입니다.
+`run_autonomy`는 파인튜닝한 **arm-4′** 정책을 돌립니다. 체크포인트는
+`models/arm4p_s0_latest.pth`이고, 플래그 없이 기본으로 선택됩니다.
 
 ```bash
 conda activate rover
-
-python -m policy.run_autonomy                              # arm-4′ (기본)
-python -m policy.run_autonomy --arm1                       # 대조군
-python -m policy.run_autonomy --upstream --ckpt best.pth   # 원래 모델
+python -m policy.run_autonomy
 ```
 
-세 경로 모두 **레포 안에서만** 해결됩니다. 정책 코드와 설정은
+모든 경로가 **레포 안에서만** 해결됩니다. 정책 코드와 설정은
 [policy/refs/](policy/refs/)에 커밋돼 있고, 가중치는 `models/`에서 읽습니다.
 `ultralytics`와 `open_clip`도 `models/omni_deps`에서 읽으므로 `PYTHONPATH`를 줄
 필요가 없습니다. 다른 곳에 두었다면 `MODELS_DIR`, `OMNIVLA_REFS_ROOT`, `OMNI_DEPS`
@@ -771,6 +745,10 @@ python -m policy.run_autonomy --upstream --ckpt best.pth   # 원래 모델
 것이고, 손대지 않습니다. 원본 디렉토리 구조까지 맞춰 둔 이유도 같습니다. 그 모듈
 몇 개가 import 시점에 상대 경로로 데이터 파일을 읽기 때문에, 구조를 유지하는 것이
 사본을 고치지 않는 유일한 방법입니다. 사본을 고치기 시작하면 원본과 조용히 어긋납니다.
+
+> 코드에는 대조군 `--arm1`(파인튜닝 전 원본)과 `--upstream`(레포에 원래 있던
+> OmniVLA-edge)도 남아 있습니다. 현장 A/B가 필요해지면 `--help`를 보세요. 둘 다
+> **3채널** 체크포인트를 쓰므로 arm-4′ 자리에 넣으면 `size mismatch`가 납니다.
 
 ### arm-4′가 매 tick 하는 일
 
@@ -1080,13 +1058,11 @@ CLIP의 77토큰을 넘으면 조용히 잘립니다.
 
 보통은 아무것도 안 줘도 됩니다.
 
-**정책** — [정책 세 가지](#정책-세-가지) 참고. `--arm1`과 `--upstream`은 같이 못 씁니다.
+**정책** — arm-4′가 기본이라 아무것도 안 줘도 됩니다 → [정책 — arm-4′](#정책--arm-4)
 
 | 옵션 | 기본값 | 설명 |
 |---|---|---|
 | (없음) | arm-4′ | 파인튜닝한 heatmap 4채널 정책 |
-| `--arm1` | 꺼짐 | 파인튜닝 전 원본. 현장 A/B 대조군 |
-| `--upstream` | 꺼짐 | 레포에 원래 있던 OmniVLA-edge |
 | `--tick-log` | `field_log/` | tick 로그와 heatmap 썸네일 |
 | `--anchor-mode` | `crop_cos` | 기준 물체(B) 를 어떻게 찾는지. `heatmap_peak` 은 이전 동작입니다 — 현장에서 이상하면 되돌리는 용도 |
 
