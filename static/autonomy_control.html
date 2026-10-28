@@ -42,6 +42,8 @@
   #stopBtn { background: #37474f; }
   #recordBtn.recording { background: #ef6c00; }
   #recordBtn.recording::before { content: "● "; }
+  #micBtn.listening { background: #1565c0; }
+  #micBtn.listening::before { content: "● "; }
   #estopBtn { background: #c62828; font-size: 16px; padding: 14px; }
   .row { display: flex; gap: 8px; }
   .row button { flex: 1; }
@@ -85,9 +87,11 @@
       <h2>Control</h2>
       <div><span id="status" class="badge off">PAUSED</span></div>
       <input type="text" id="prompt" placeholder="e.g. the blue trash bin" autofocus />
+      <button id="micBtn">Speak instruction</button>
       <button id="setBtn">Set instruction (Enter)</button>
       <div class="hint" style="margin: 0">
         Takes effect on the next tick — you can redirect the rover mid-drive.
+        Speaking (in English) only fills the box; press Enter to apply it.
       </div>
       <div class="row">
         <button id="startBtn">Start</button>
@@ -313,6 +317,74 @@
       send("prompt");
     }
   });
+
+  // --- Voice instruction -------------------------------------------------
+  // Browser speech recognition. The policy's text encoder is CLIP, trained on
+  // English, so the recogniser is pinned to en-US. The transcript only fills the
+  // box and still has to be applied with Enter, so a misheard phrase never
+  // redirects the rover on its own.
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const micBtn = el("micBtn");
+  let listening = false;
+
+  const SPEECH_ERRORS = {
+    "not-allowed": "Microphone blocked — allow it for this page.",
+    "service-not-allowed": "Microphone blocked — allow it for this page.",
+    "audio-capture": "No microphone found.",
+    "no-speech": "Heard nothing — try again.",
+    "network":
+      "Speech service unreachable. It needs internet, and Google Chrome rather than Chromium.",
+  };
+
+  function setListening(on) {
+    listening = on;
+    micBtn.textContent = on ? "Listening… (click to stop)" : "Speak instruction";
+    micBtn.classList.toggle("listening", on);
+  }
+
+  if (!Recognition) {
+    micBtn.disabled = true;
+    micBtn.textContent = "Speak — needs Chrome";
+  } else if (!window.isSecureContext) {
+    // Browsers only grant the microphone to localhost or HTTPS origins.
+    micBtn.disabled = true;
+    micBtn.textContent = "Speak — open via localhost";
+  } else {
+    const recognizer = new Recognition();
+    recognizer.lang = "en-US";
+    recognizer.interimResults = true;
+    recognizer.maxAlternatives = 1;
+
+    recognizer.onresult = (e) => {
+      el("prompt").value = Array.from(e.results, (r) => r[0].transcript).join("").trim();
+      // Setting .value fires no input event; without this the next poll would
+      // put the active instruction back in the box.
+      promptDirty = true;
+    };
+    recognizer.onerror = (e) => {
+      if (e.error !== "aborted") {
+        showError(SPEECH_ERRORS[e.error] || `Speech recognition failed: ${e.error}`);
+      }
+    };
+    recognizer.onend = () => {
+      setListening(false);
+      // So Enter applies the transcript straight away.
+      el("prompt").focus();
+    };
+
+    micBtn.addEventListener("click", () => {
+      if (listening) {
+        recognizer.stop();
+        return;
+      }
+      try {
+        recognizer.start();
+        setListening(true);
+      } catch (e) {
+        showError("Speech recognition failed: " + e.message);
+      }
+    });
+  }
 
   // Space bar is an e-stop, so the operator never has to aim at a button.
   window.addEventListener("keydown", (e) => {

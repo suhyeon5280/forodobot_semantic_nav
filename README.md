@@ -503,6 +503,7 @@ python -m policy.run_autonomy --ckpt best.pth
 |---|---|
 | 지시문 입력 → **Start** | 적은 곳을 향해 주행 시작 |
 | 지시문 수정 → **Enter** / **Set instruction** | **정지 없이** 지시문 교체 |
+| **Speak instruction** → 영어로 말하기 → **Enter** | 음성으로 지시문 입력. 입력창만 채우고, Enter를 눌러야 적용됩니다 |
 | **Stop** | 루프 일시정지 + 로봇 정지 |
 | **E-STOP** / **Space** | 즉시 정지 (모델 프로세스를 거치지 않음) |
 | **Start Recording** | `dataset/sessions/`에 주행 기록 |
@@ -668,6 +669,8 @@ CLIP의 77토큰을 넘으면 조용히 잘립니다.
 | `--dry-run`에서 궤적이 노이즈 | 전처리가 파인튜닝 때와 다르거나 카메라 화각이 학습 분포 밖. `--context-stride`부터 확인 |
 | 커브를 계속 짧게 자름 / 크게 돎 | [캘리브레이션](#속도-캘리브레이션) |
 | 주행은 하는데 지시를 무시함 | 텔레메트리의 modality id가 7인지 확인, 더 짧고 구체적인 명사구로 시도 |
+| `Speak — needs Chrome` / `Speak — open via localhost` | 음성 입력은 브라우저 Web Speech API를 씁니다. Chrome으로, `localhost` 주소로 여세요. 브라우저는 IP 주소(`http://192.168.x.x`)로 연 페이지에는 마이크를 주지 않습니다. 다른 PC에서 쓰려면 `ssh -L 8000:localhost:8000 -L 8010:localhost:8010 <host>`로 포워딩한 뒤 localhost로 여세요 |
+| 음성 입력이 `Speech service unreachable` | 음성이 Google 서버로 가서 인식됩니다. 인터넷 연결, 그리고 Chromium이 아닌 Google Chrome인지 확인하세요 |
 | `no kernel image is available` | GPU에 비해 torch가 오래됨. `pip install --upgrade --force-reinstall torch torchvision` — conda 패키지 말고 pip으로, 버전 고정 없이 |
 | `hypercorn: command not found` / `ModuleNotFoundError` | `conda activate rover`를 안 했습니다. 프롬프트에 `(rover)`가 보이는지 확인하세요. hypercorn 잘못이 아닙니다 |
 | 모델 쪽에 `400 Client Error` | 서버가 400을 돌려준 것. `curl -i http://127.0.0.1:8000/v2/front`로 `detail`을 보세요 — `Call /start-mission...`이면 **`.env`의 `MISSION_SLUG`를 지우고 서버 재시작**, `Failed to retrieve tokens`면 `SDK_API_TOKEN`/`BOT_SLUG`가 틀린 것 |
