@@ -71,6 +71,8 @@ from .omnivla_policy import (
     gps_goal_to_pose,
     relative_goal_to_pose,
 )
+from .proximity import FillConfig
+from .proximity import measure as measure_fill
 from .rover_client import RoverClient
 
 logger = logging.getLogger("autonomy")
@@ -80,6 +82,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # manual driving pages. This process serves the same file, so there is only ever
 # one copy to keep up to date.
 AUTONOMY_PAGE = os.path.join(os.path.dirname(HERE), "static", "autonomy_control.html")
+# Next to the policy's ticks.jsonl, and for --upstream too, which keeps none.
+DEFAULT_FIELD_LOG = os.path.join(os.path.dirname(HERE), "field_log")
 
 
 class AutonomyLoop:
@@ -104,6 +108,9 @@ class AutonomyLoop:
         max_ang_rps: float,
         dry_run: bool,
         record: bool,
+        fill_mode: str = "off",
+        fill_config: Optional[FillConfig] = None,
+        fill_log: Optional[str] = None,
     ) -> None:
         self.policy = policy
         self.client = client
@@ -120,6 +127,10 @@ class AutonomyLoop:
         self.max_ang_rps = max_ang_rps
         self.dry_run = dry_run
         self.record = record
+        self.fill_mode = fill_mode
+        self.fill_config = fill_config or FillConfig()
+        self.fill_log = fill_log
+        self._fill_streak = 0
 
         # Deep enough to pull CONTEXT_LEN frames spaced `context_stride` apart.
         self._frames = collections.deque(
@@ -154,6 +165,7 @@ class AutonomyLoop:
             "calibration_left": 0.0,
             "max_lin_mps": max_lin_mps,
             "max_ang_rps": max_ang_rps,
+            "fill": {"mode": fill_mode},
             # Lets the page find the SDK server for its own emergency stop.
             "server": client.base_url,
         }
@@ -343,6 +355,13 @@ class AutonomyLoop:
             return
 
         running = self._running
+        fill_reason = self._check_fill(frame, running)
+        if fill_reason:
+            self.stop(reason=fill_reason)
+            with self._lock:
+                self.state["frame"] = frame.base64
+            return
+
         # Keep the history warm while paused so pressing Start does not run the
         # policy on frames from minutes ago.
         if not running:
@@ -406,6 +425,65 @@ class AutonomyLoop:
                     "error": None,
                 }
             )
+
+    def _check_fill(self, frame, running: bool) -> Optional[str]:
+        """How much one surface fills the view; a reason string means stop now.
+
+        Measured while paused as well, so the numbers can be read off the page
+        with the rover standing still and someone walking up to it. Turning is
+        not excluded: the turn rate is capped at 0.3 rad/s, too slow to blur the
+        frame much, and the rover often closes in on its target while turning
+        slightly. A single blurred frame is what `ticks` is for.
+        """
+        if self.fill_mode == "off":
+            return None
+        fill = measure_fill(frame.image, self.fill_config)
+        self._fill_streak = self._fill_streak + 1 if running and fill["full"] else 0
+        tripped = self._fill_streak >= self.fill_config.ticks
+        action = None
+        if tripped:
+            action = "stop" if self.fill_mode == "on" else "would_stop"
+        fill.update(mode=self.fill_mode, streak=self._fill_streak, action=action)
+        with self._lock:
+            self.state["fill"] = fill
+            last = (self.state["linear"], self.state["angular"])
+            prompt = self.prompt
+        self._log_fill(running, prompt, last, fill)
+
+        if not tripped:
+            return None
+        detail = (
+            f"center {fill['center_std']:.1f}, ratio {fill['ratio']:.2f}, "
+            f"{self._fill_streak} ticks"
+        )
+        if self.fill_mode == "on":
+            self._fill_streak = 0
+            return f"stopped: view filled ({detail})"
+        if self._fill_streak == self.fill_config.ticks:
+            logger.warning(
+                "view filled (%s) — would stop here; --fill-stop log only records it",
+                detail,
+            )
+        return None
+
+    def _log_fill(self, running: bool, prompt, last: tuple, fill: dict) -> None:
+        if not self.fill_log:
+            return
+        record = {
+            "t": round(time.time(), 3),
+            "running": running,
+            "prompt": prompt,
+            "last_linear": round(float(last[0]), 3),
+            "last_angular": round(float(last[1]), 3),
+            **fill,
+        }
+        try:
+            # The directory may have been moved aside mid-run to start a fresh log.
+            os.makedirs(os.path.dirname(self.fill_log), exist_ok=True)
+            with open(self.fill_log, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            logger.error("fill log write failed: %s", exc)
 
     def _calibration_tick(self) -> None:
         calibration = self._calibration
@@ -649,6 +727,48 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="run inference and show the result without sending any command",
     )
     safety.add_argument("--autostart", action="store_true")
+    safety.add_argument(
+        "--fill-stop",
+        choices=("off", "log", "on"),
+        default="log",
+        help="stop when one surface fills the view straight ahead "
+             "(policy/proximity.py). log only records where it would have "
+             "stopped, in field_log/fill.jsonl; on stops the loop",
+    )
+    safety.add_argument(
+        "--fill-center-std",
+        type=float,
+        default=FillConfig.max_center_std,
+        help="full when the centre's colour spread is below this (0-255 scale)",
+    )
+    safety.add_argument(
+        "--fill-ratio",
+        type=float,
+        default=FillConfig.max_ratio,
+        help="...and centre/sides is below this. 0 drops the ratio check, so "
+             "a wall filling the whole view counts too",
+    )
+    safety.add_argument(
+        "--fill-ticks",
+        type=int,
+        default=FillConfig.ticks,
+        help="consecutive full frames before stopping",
+    )
+    safety.add_argument(
+        "--fill-band",
+        type=_pair,
+        metavar="TOP,BOTTOM",
+        default=FillConfig.band,
+        help="rows measured, as fractions of the frame height; above is sky, "
+             "below is ground",
+    )
+    safety.add_argument(
+        "--fill-center-width",
+        type=float,
+        default=FillConfig.center_width,
+        help="centre width as a fraction of the frame; narrower fills from "
+             "further away",
+    )
 
     parser.add_argument("--record", action="store_true", help="log the run via /dataset/*")
     parser.add_argument("--ui-port", type=int, default=8010)
@@ -668,7 +788,21 @@ def parse_args(argv=None) -> argparse.Namespace:
         parser.error("--no-ui needs a goal up front, since nothing can set one")
     if args.goal_latlon and args.relative_goal:
         parser.error("--goal-latlon and --relative-goal are mutually exclusive")
+    try:
+        fill_config_from(args).validate()
+    except ValueError as exc:
+        parser.error(f"--fill-*: {exc}")
     return args
+
+
+def fill_config_from(args: argparse.Namespace) -> FillConfig:
+    return FillConfig(
+        band=tuple(args.fill_band),
+        center_width=args.fill_center_width,
+        max_center_std=args.fill_center_std,
+        max_ratio=args.fill_ratio,
+        ticks=args.fill_ticks,
+    )
 
 
 def main(argv=None) -> int:
@@ -754,7 +888,24 @@ def main(argv=None) -> int:
         max_ang_rps=max_ang_rps,
         dry_run=args.dry_run,
         record=args.record,
+        fill_mode=args.fill_stop,
+        fill_config=fill_config_from(args),
+        fill_log=os.path.join(args.tick_log or DEFAULT_FIELD_LOG, "fill.jsonl"),
     )
+    if args.fill_stop != "off":
+        fill = loop.fill_config
+        logger.info(
+            "fill-stop %s: centre spread < %.1f and ratio < %.2f for %d ticks "
+            "(band %.2f-%.2f, centre width %.2f) -> %s",
+            args.fill_stop,
+            fill.max_center_std,
+            fill.max_ratio,
+            fill.ticks,
+            fill.band[0],
+            fill.band[1],
+            fill.center_width,
+            loop.fill_log,
+        )
 
     server = None
     if not args.no_ui:

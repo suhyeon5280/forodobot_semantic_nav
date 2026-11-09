@@ -43,6 +43,8 @@
   #recordBtn.recording { background: #ef6c00; }
   #recordBtn.recording::before { content: "● "; }
   #estopBtn { background: #c62828; font-size: 16px; padding: 14px; }
+  #micBtn { background: #1565c0; }
+  #micBtn.listening { background: #ef6c00; }
   .row { display: flex; gap: 8px; }
   .row button { flex: 1; }
   table { border-collapse: collapse; font-family: monospace; font-size: 13px; }
@@ -85,6 +87,11 @@
       <h2>Control</h2>
       <div><span id="status" class="badge off">PAUSED</span></div>
       <input type="text" id="prompt" placeholder="e.g. the blue trash bin" autofocus />
+      <button id="micBtn">🎤 Speak instruction</button>
+      <div class="hint" style="margin: 0">
+        Press, speak, press again: the instruction is applied and a paused rover
+        starts. Esc cancels. Google Chrome only.
+      </div>
       <button id="setBtn">Set instruction (Enter)</button>
       <div class="hint" style="margin: 0">
         Takes effect on the next tick — you can redirect the rover mid-drive.
@@ -138,6 +145,7 @@
         <tr><td class="k">loop</td><td id="t-loop">—</td></tr>
         <tr><td class="k">ticks</td><td id="t-tick">—</td></tr>
         <tr><td class="k">recording</td><td id="t-session">—</td></tr>
+        <tr><td class="k">view fill</td><td id="t-fill">—</td></tr>
       </table>
     </div>
   </div>
@@ -195,8 +203,8 @@
     }
     // E-STOP is deliberately left enabled: it talks to the SDK server, not the
     // policy, and it is exactly when the policy is dead that you need it.
-    ["startBtn", "stopBtn", "setBtn", "recordBtn", "calLinBtn", "calAngBtn",
-     "calApplyBtn"].forEach((id) => {
+    ["startBtn", "stopBtn", "setBtn", "micBtn", "recordBtn", "calLinBtn",
+     "calAngBtn", "calApplyBtn"].forEach((id) => {
       if (!ok) el(id).disabled = true;
     });
     if (!ok) {
@@ -314,6 +322,119 @@
     }
   });
 
+  // Spoken instructions. The first press starts listening and the words are
+  // written into the instruction box as they are heard, so they can be read
+  // before anything moves. The second press is the confirmation: the
+  // instruction is applied, and a paused loop starts. Esc throws it away.
+  //
+  // Chrome sends the audio to Google, so this needs internet, and browsers only
+  // allow the microphone on localhost or https -- not on http://<ip>:8000.
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const MIC_ERRORS = {
+    "not-allowed": "microphone blocked. Allow it in the address bar; it only works on localhost or https",
+    "service-not-allowed": "speech service blocked by the browser",
+    "network": "speech service unreachable. Needs internet and Google Chrome (Chromium builds lack it)",
+    "no-speech": "no speech heard",
+    "audio-capture": "no microphone found",
+  };
+  let rec = null;
+  let micState = "idle";  // idle | listening | ready (stopped on its own, text kept)
+  let micBefore = "";
+  let micText = "";
+  let micSendOnEnd = false;
+
+  function setMic(state) {
+    micState = state;
+    el("micBtn").classList.toggle("listening", state !== "idle");
+    el("micBtn").textContent =
+      state === "idle" ? "🎤 Speak instruction" : "■ Done — send";
+  }
+
+  function micSend() {
+    const text = micText.trim().replace(/[.?!,]+$/, "");
+    setMic("idle");
+    if (!text) {
+      el("prompt").value = micBefore;
+      promptDirty = false;
+      showError("Speech: nothing recognised");
+      return;
+    }
+    el("prompt").value = text;
+    send(el("stopBtn").disabled ? "start" : "prompt");
+  }
+
+  function micStart() {
+    rec = new Recognition();
+    rec.lang = "en-US";          // the prompt parser only reads English
+    rec.continuous = true;       // keep listening through pauses until Done
+    rec.interimResults = true;   // show words as they are heard
+    micBefore = el("prompt").value;
+    micText = "";
+    micSendOnEnd = false;
+    rec.onresult = (e) => {
+      let text = "";
+      for (let i = 0; i < e.results.length; i++) text += e.results[i][0].transcript;
+      micText = text;
+      el("prompt").value = text.trim();
+    };
+    rec.onerror = (e) => {
+      if (e.error !== "aborted") showError("Speech: " + (MIC_ERRORS[e.error] || e.error));
+    };
+    rec.onend = () => {
+      rec = null;
+      if (micSendOnEnd) {
+        micSend();
+      } else if (micState === "listening") {
+        // Chrome stopped by itself (long silence, error). Keep what was heard;
+        // the next press sends it.
+        if (micText.trim()) {
+          setMic("ready");
+        } else {
+          setMic("idle");
+          el("prompt").value = micBefore;
+          promptDirty = false;
+        }
+      }
+    };
+    // Otherwise the next poll writes the active instruction back over the box.
+    promptDirty = true;
+    setMic("listening");
+    rec.start();
+  }
+
+  function micCancel() {
+    if (micState === "idle") return;
+    micSendOnEnd = false;
+    setMic("idle");
+    if (rec) rec.abort();
+    el("prompt").value = micBefore;
+    promptDirty = false;
+  }
+
+  if (!Recognition) {
+    el("micBtn").disabled = true;
+    el("micBtn").title = "No speech recognition in this browser; use Google Chrome";
+  }
+
+  el("micBtn").addEventListener("click", (e) => {
+    // Off the button, so a later Space is an e-stop and not a second press.
+    e.currentTarget.blur();
+    if (micState === "idle") {
+      micStart();
+    } else if (micState === "listening" && rec) {
+      // Send on onend, not here: the final words can still arrive after stop().
+      micSendOnEnd = true;
+      el("micBtn").textContent = "… sending";
+      rec.stop();
+    } else {
+      micSend();
+    }
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") micCancel();
+  });
+
   // Space bar is an e-stop, so the operator never has to aim at a button.
   window.addEventListener("keydown", (e) => {
     if (e.code === "Space" && e.target.tagName !== "INPUT") {
@@ -384,6 +505,7 @@
     el("stopBtn").disabled = !state.running;
     el("estopBtn").disabled = false;
     el("setBtn").disabled = false;
+    el("micBtn").disabled = !Recognition;
     el("recordBtn").disabled = false;
 
     recording = !!state.record;
@@ -420,6 +542,13 @@
     el("t-loop").textContent = state.loop_ms.toFixed(0) + " ms";
     el("t-tick").textContent = state.tick;
     el("t-session").textContent = state.session ?? "off";
+    // Updated while paused too: walk up to the parked rover and read it off.
+    const fill = state.fill || {};
+    el("t-fill").textContent = fill.center_std === undefined
+      ? (fill.mode === "off" ? "off" : "—")
+      : `centre ${fill.center_std.toFixed(1)} · sides ${fill.outer_std.toFixed(1)} · ` +
+        `ratio ${fill.ratio.toFixed(2)} · ${fill.full ? "FULL" : "clear"} [${fill.mode}]`;
+    el("t-fill").style.color = fill.full ? "#ffb74d" : "";
     if (Date.now() - localErrorAt > 4000) {
       errorEl.textContent = state.error || "";
     }
