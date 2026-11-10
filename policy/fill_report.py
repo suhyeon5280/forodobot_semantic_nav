@@ -16,7 +16,7 @@ import time
 
 from PIL import Image
 
-from .proximity import FillConfig, measure
+from .proximity import FillConfig, describe_fill_rule, measure
 
 DEFAULT_LOG = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "field_log", "fill.jsonl"
@@ -74,9 +74,8 @@ def report_log(path: str, last: int, running_only: bool) -> int:
 
 
 def report_images(paths, config: FillConfig) -> int:
-    print("band %.2f-%.2f, centre width %.2f, full when centre < %.1f and ratio < %.2f\n" % (
-        config.band[0], config.band[1], config.center_width,
-        config.max_center_std, config.max_ratio,
+    print("band %.2f-%.2f, centre width %.2f, full when %s\n" % (
+        config.band[0], config.band[1], config.center_width, describe_fill_rule(config),
     ))
     for path in paths:
         print("  %s  %s" % (_row(measure(Image.open(path), config)), path))

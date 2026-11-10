@@ -71,7 +71,7 @@ from .omnivla_policy import (
     gps_goal_to_pose,
     relative_goal_to_pose,
 )
-from .proximity import FillConfig
+from .proximity import FillConfig, describe_fill_rule
 from .proximity import measure as measure_fill
 from .rover_client import RoverClient
 
@@ -730,16 +730,17 @@ def parse_args(argv=None) -> argparse.Namespace:
     safety.add_argument(
         "--fill-stop",
         choices=("off", "log", "on"),
-        default="log",
+        default="on",
         help="stop when one surface fills the view straight ahead "
-             "(policy/proximity.py). log only records where it would have "
-             "stopped, in field_log/fill.jsonl; on stops the loop",
+             "(policy/proximity.py). on (default) stops the loop; log only "
+             "records where it would have stopped, in field_log/fill.jsonl",
     )
     safety.add_argument(
         "--fill-center-std",
         type=float,
         default=FillConfig.max_center_std,
-        help="full when the centre's colour spread is below this (0-255 scale)",
+        help="also require the centre's colour spread below this (0-255 "
+             "scale). 0 (default) leaves it out: the ratio alone decides",
     )
     safety.add_argument(
         "--fill-ratio",
@@ -895,11 +896,10 @@ def main(argv=None) -> int:
     if args.fill_stop != "off":
         fill = loop.fill_config
         logger.info(
-            "fill-stop %s: centre spread < %.1f and ratio < %.2f for %d ticks "
+            "fill-stop %s: %s for %d ticks "
             "(band %.2f-%.2f, centre width %.2f) -> %s",
             args.fill_stop,
-            fill.max_center_std,
-            fill.max_ratio,
+            describe_fill_rule(fill),
             fill.ticks,
             fill.band[0],
             fill.band[1],

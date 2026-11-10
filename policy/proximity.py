@@ -16,10 +16,15 @@ numbers, on a horizontal band of the frame:
     │   below the band: floor / road   │   not used: flat on its own
     └──────────────────────────────────┘
 
-A frame counts as full when both are low. The ratio is what keeps a plain
-stretch of ground or a blank sky out, and also what stops a wall that fills the
-whole view from counting -- the sides are flat too -- so `max_ratio <= 0` turns
-the ratio check off for that case.
+A frame counts as full when the ratio is low. The ratio alone decides by
+default: on the rover, center_std on its own moved too much with lighting,
+exposure and the folds of the fabric to put a fixed number on, while the ratio
+compares two parts of the same frame and cancels those out. `max_center_std`
+adds center_std as a second condition; 0 leaves it out.
+
+A wall that fills the whole view does not count -- the sides are flat too --
+so `max_ratio <= 0` turns the ratio check off for that case, which then needs
+`max_center_std` set.
 
 The spread is the standard deviation of the RGB values (0-255), averaged over
 the three channels, so a red skirt and a grey wall of the same brightness still
@@ -43,9 +48,7 @@ class FillConfig:
     band: Tuple[float, float] = (0.30, 0.60)
     center_width: float = 0.20
     outer_width: float = 0.15
-    # Placeholders until measured on the rover: a plain skirt up close should
-    # sit well under max_center_std, an open scene well over it.
-    max_center_std: float = 12.0
+    max_center_std: float = 0.0
     max_ratio: float = 0.35
     ticks: int = 2
     size: Tuple[int, int] = (160, 90)
@@ -61,6 +64,21 @@ class FillConfig:
             )
         if self.ticks < 1:
             raise ValueError(f"ticks must be at least 1, got {self.ticks}")
+        if self.max_center_std <= 0 and self.max_ratio <= 0:
+            raise ValueError(
+                "the ratio and centre checks are both off, so every frame "
+                "would count as full; set at least one above 0"
+            )
+
+
+def describe_fill_rule(config: FillConfig) -> str:
+    """The full-frame condition in words, for logs and reports."""
+    parts = []
+    if config.max_ratio > 0:
+        parts.append(f"ratio < {config.max_ratio:.2f}")
+    if config.max_center_std > 0:
+        parts.append(f"centre spread < {config.max_center_std:.1f}")
+    return " and ".join(parts)
 
 
 def _spread(region: np.ndarray) -> float:
@@ -85,8 +103,8 @@ def measure(image: Image.Image, config: FillConfig) -> Dict[str, float]:
     # A frame that is flat everywhere (lens covered, stream blank) comes out
     # at ratio 0 and counts as full: not seeing is a reason to stop.
     ratio = center_std / outer_std if outer_std > 1e-6 else 0.0
-    full = center_std < config.max_center_std and (
-        config.max_ratio <= 0 or ratio < config.max_ratio
+    full = (config.max_ratio <= 0 or ratio < config.max_ratio) and (
+        config.max_center_std <= 0 or center_std < config.max_center_std
     )
     return {
         "center_std": round(center_std, 2),
