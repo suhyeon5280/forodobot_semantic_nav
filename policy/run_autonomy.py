@@ -750,6 +750,21 @@ def parse_args(argv=None) -> argparse.Namespace:
              "a wall filling the whole view counts too",
     )
     safety.add_argument(
+        "--fill-spread",
+        choices=("colour", "rgb"),
+        default=FillConfig.spread,
+        help="how colour spread is measured. colour (default) ignores folds "
+             "and sheen: it compares colour, not brightness, and drops the "
+             "brightest pixels. rgb is the plain RGB standard deviation",
+    )
+    safety.add_argument(
+        "--fill-trim-bright",
+        type=float,
+        default=FillConfig.trim_bright,
+        help="share of the brightest pixels dropped as sheen (colour spread "
+             "only); raise it for a glossy fabric",
+    )
+    safety.add_argument(
         "--fill-ticks",
         type=int,
         default=FillConfig.ticks,
@@ -803,6 +818,8 @@ def fill_config_from(args: argparse.Namespace) -> FillConfig:
         max_center_std=args.fill_center_std,
         max_ratio=args.fill_ratio,
         ticks=args.fill_ticks,
+        spread=args.fill_spread,
+        trim_bright=args.fill_trim_bright,
     )
 
 

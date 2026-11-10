@@ -5,7 +5,9 @@
     python -m policy.fill_report --image a.jpg b.jpg
 
 Images are measured with the same defaults as the loop; pass the same
---band / --center-width / --center-std / --ratio as the run to compare.
+--band / --center-width / --center-std / --ratio / --spread / --trim-bright as
+the run to compare. `--spread rgb` next to the default shows what folds and
+sheen were costing.
 """
 
 import argparse
@@ -93,6 +95,8 @@ def main(argv=None) -> int:
     parser.add_argument("--center-width", type=float, default=defaults.center_width)
     parser.add_argument("--center-std", type=float, default=defaults.max_center_std)
     parser.add_argument("--ratio", type=float, default=defaults.max_ratio)
+    parser.add_argument("--spread", choices=("colour", "rgb"), default=defaults.spread)
+    parser.add_argument("--trim-bright", type=float, default=defaults.trim_bright)
     args = parser.parse_args(argv)
 
     if args.image:
@@ -101,6 +105,8 @@ def main(argv=None) -> int:
             center_width=args.center_width,
             max_center_std=args.center_std,
             max_ratio=args.ratio,
+            spread=args.spread,
+            trim_bright=args.trim_bright,
         )
         try:
             config.validate()
